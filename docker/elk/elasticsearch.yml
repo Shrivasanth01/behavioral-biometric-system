@@ -1,0 +1,48 @@
+cluster.name: bbs-logs
+node.name: bbs-elasticsearch
+node.roles: [master, data, ingest]
+path.data: /usr/share/elasticsearch/data
+path.logs: /usr/share/elasticsearch/logs
+
+network.host: 0.0.0.0
+http.port: 9200
+
+discovery.type: single-node
+
+xpack.security.enabled: false
+xpack.monitoring.enabled: true
+xpack.monitoring.collection.enabled: true
+
+indices.lifecycle.poll_interval: 10m
+
+indices.memory.index_buffer_size: 10%
+
+indices.fielddata.cache.size: 20%
+
+thread_pool:
+  write:
+    size: 4
+    queue_size: 1000
+  search:
+    size: 8
+    queue_size: 1000
+  get:
+    size: 4
+    queue_size: 1000
+
+bootstrap.memory_lock: true
+
+action.auto_create_index: "+bbs-*,-*"
+action.destructive_requires_name: true
+
+cluster.max_shards_per_node: 100
+
+indices.breaker.fielddata.limit: 40%
+indices.breaker.request.limit: 60%
+indices.breaker.total.limit: 80%
+
+monitoring:
+  elasticsearch:
+    collection:
+      enabled: true
+      interval: 30s

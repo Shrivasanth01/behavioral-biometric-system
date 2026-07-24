@@ -1,0 +1,298 @@
+version: "3.8"
+
+services:
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 1G
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bbs_user -d bbs_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    environment:
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+    secrets:
+      - redis_password
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "1"
+          memory: 512M
+    secrets:
+      - secret_key
+      - sentry_dsn
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      SENTRY_DSN_FILE: /run/secrets/sentry_dsn
+      DATABASE_URL: ""
+      DATABASE_URL_FILE: /run/secrets/database_url
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "awslogs"
+      options:
+        awslogs-group: "bbs-backend"
+        awslogs-region: "${AWS_REGION}"
+        awslogs-stream: "backend"
+
+  celery-worker:
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+      resources:
+        limits:
+          cpus: "4"
+          memory: 2G
+        reservations:
+          cpus: "2"
+          memory: 1G
+    secrets:
+      - secret_key
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      DATABASE_URL_FILE: /run/secrets/database_url
+    healthcheck:
+      disable: true
+
+  celery-beat:
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    secrets:
+      - secret_key
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      DATABASE_URL_FILE: /run/secrets/database_url
+    healthcheck:
+      disable: true
+
+  frontend:
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    environment:
+      NEXT_PUBLIC_API_URL: https://app.bbs-platform.com/api
+      NEXT_PUBLIC_WS_URL: wss://app.bbs-platform.com/api/ws
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health',(r)=>{process.exit(r.statusCode===200?0:1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  security-dashboard:
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    environment:
+      NEXT_PUBLIC_API_URL: https://app.bbs-platform.com/api
+      NEXT_PUBLIC_WS_URL: wss://app.bbs-platform.com/api/ws
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/health',(r)=>{process.exit(r.statusCode===200?0:1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  ml-service:
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 30s
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+        reservations:
+          cpus: "2"
+          memory: 2G
+    environment:
+      LOG_LEVEL: info
+      BATCH_SIZE: 128
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  nginx:
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+        reservations:
+          cpus: "0.5"
+          memory: 128M
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  grafana:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
+    secrets:
+      - grafana_password
+
+  elasticsearch:
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 1G
+
+  logstash:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  alertmanager:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+secrets:
+  postgres_password:
+    external: true
+    name: bbs_postgres_password
+  redis_password:
+    external: true
+    name: bbs_redis_password
+  secret_key:
+    external: true
+    name: bbs_secret_key
+  sentry_dsn:
+    external: true
+    name: bbs_sentry_dsn
+  database_url:
+    external: true
+    name: bbs_database_url
+  grafana_password:
+    external: true
+    name: bbs_grafana_password

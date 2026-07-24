@@ -1,0 +1,307 @@
+{
+  "title": "API Performance",
+  "uid": "api-performance",
+  "version": 1,
+  "schemaVersion": 38,
+  "tags": ["backend", "api", "performance"],
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "15s", "30s", "1m", "5m"]
+  },
+  "panels": [
+    {
+      "title": "Total Requests",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"backend\"}[5m]))",
+          "legendFormat": "Req/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "title": "Error Rate",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 3, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"backend\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"backend\"}[5m])) * 100",
+          "legendFormat": "Error %"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "p95 Latency",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"backend\"}[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.5 },
+              { "color": "red", "value": 1.0 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "p99 Latency",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 9, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"backend\"}[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1.0 },
+              { "color": "red", "value": 2.0 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Active Users",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(active_users_total)",
+          "legendFormat": "Active Users"
+        }
+      ]
+    },
+    {
+      "title": "Auth Success Rate",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 15, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"backend\",handler=\"/api/v1/auth/login\",status=\"200\"}[5m])) / sum(rate(http_requests_total{job=\"backend\",handler=\"/api/v1/auth/login\"}[5m])) * 100"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      }
+    },
+    {
+      "title": "WebSocket Connections",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(websocket_connections_active)",
+          "legendFormat": "Active WS"
+        }
+      ]
+    },
+    {
+      "title": "Response Time by Endpoint (p95)",
+      "type": "barchart",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 3 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"backend\"}[5m])) by (le, handler))",
+          "legendFormat": "{{handler}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "showLabels": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Request Rate by Endpoint",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 3 },
+      "targets": [
+        {
+          "expr": "sum by (handler) (rate(http_requests_total{job=\"backend\"}[5m]))",
+          "legendFormat": "{{handler}}"
+        }
+      ],
+      "options": {
+        "legend": { "show": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "title": "HTTP Error Breakdown by Status Code",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 10 },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(http_requests_total{job=\"backend\",status=~\"4..|5..\"}[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "options": {
+        "legend": { "show": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "title": "Database Query Duration (p95)",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 10 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(db_query_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95 Query Time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Cache Hit Ratio",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 10 },
+      "targets": [
+        {
+          "expr": "rate(redis_cache_hits_total[5m]) / (rate(redis_cache_hits_total[5m]) + rate(redis_cache_misses_total[5m])) * 100",
+          "legendFormat": "Hit Ratio %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      }
+    },
+    {
+      "title": "API Availability (SLO)",
+      "type": "graph",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"backend\",status!~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"backend\"}[5m])) * 100",
+          "legendFormat": "Availability %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 99.0,
+          "max": 100.0
+        }
+      },
+      "options": {
+        "thresholds": [
+          { "colorMode": "red", "fill": true, "line": true, "op": "lt", "value": 99.5 },
+          { "colorMode": "yellow", "fill": true, "line": true, "op": "lt", "value": 99.9 },
+          { "colorMode": "green", "fill": false, "line": true, "op": "gt", "value": 99.9 }
+        ]
+      }
+    },
+    {
+      "title": "Rate Limited Requests",
+      "type": "graph",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 17 },
+      "targets": [
+        {
+          "expr": "rate(http_requests_rate_limited_total[5m])",
+          "legendFormat": "Rate Limited"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps"
+        }
+      }
+    }
+  ]
+}

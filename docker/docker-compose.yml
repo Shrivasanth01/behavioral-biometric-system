@@ -1,0 +1,340 @@
+version: "3.8"
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-healthcheck: &db-healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bbs-postgres
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    environment:
+      POSTGRES_DB: bbs_platform
+      POSTGRES_USER: bbs_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bbs_secure_password}
+      POSTGRES_MULTIPLE_DATABASES: bbs_platform,bbs_analytics,bbs_audit
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bbs_user -d bbs_platform"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: bbs-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-bbs_redis_pass}
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    container_name: bbs-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://bbs_user:${POSTGRES_PASSWORD:-bbs_secure_password}@postgres:5432/bbs_platform
+      REDIS_URL: redis://:${REDIS_PASSWORD:-bbs_redis_pass}@redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.bbs-platform.com}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      ML_SERVICE_URL: http://ml-service:8001
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    container_name: bbs-celery-worker
+    restart: unless-stopped
+    command: celery -A app.tasks worker --loglevel=info --concurrency=8 --max-tasks-per-child=1000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://bbs_user:${POSTGRES_PASSWORD:-bbs_secure_password}@postgres:5432/bbs_platform
+      REDIS_URL: redis://:${REDIS_PASSWORD:-bbs_redis_pass}@redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ML_SERVICE_URL: http://ml-service:8001
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  celery-beat:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    container_name: bbs-celery-beat
+    restart: unless-stopped
+    command: celery -A app.tasks beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://bbs_user:${POSTGRES_PASSWORD:-bbs_secure_password}@postgres:5432/bbs_platform
+      REDIS_URL: redis://:${REDIS_PASSWORD:-bbs_redis_pass}@redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend/Dockerfile
+    container_name: bbs-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://app.bbs-platform.com/api}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-wss://app.bbs-platform.com/api/ws}
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health',(r)=>{process.exit(r.statusCode===200?0:1)})"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  security-dashboard:
+    build:
+      context: ..
+      dockerfile: docker/security-dashboard/Dockerfile
+    container_name: bbs-security-dashboard
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://app.bbs-platform.com/api}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-wss://app.bbs-platform.com/api/ws}
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/health',(r)=>{process.exit(r.statusCode===200?0:1)})"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  ml-service:
+    build:
+      context: ..
+      dockerfile: docker/ml/Dockerfile
+    container_name: bbs-ml-service
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD:-bbs_redis_pass}@redis:6379/1
+      MODEL_PATH: /app/models
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BATCH_SIZE: ${ML_BATCH_SIZE:-64}
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      <<: *db-healthcheck
+    volumes:
+      - ml-models:/app/models
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: bbs-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+      - frontend
+      - security-dashboard
+      - prometheus
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: bbs-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    expose:
+      - "9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "http://localhost:9090/-/ready"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: bbs-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: https://app.bbs-platform.com/dashboard/monitoring
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "http://localhost:3000/api/health"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: bbs-elasticsearch
+    restart: unless-stopped
+    environment:
+      - node.name=bbs-elasticsearch
+      - cluster.name=bbs-logs
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+      - ./elk/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    expose:
+      - "9200"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: bbs-logstash
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    command: logstash -f /usr/share/logstash/pipeline/logstash.conf
+    volumes:
+      - ./elk/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    expose:
+      - "5000"
+      - "5044"
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: bbs-alertmanager
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    expose:
+      - "9093"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "http://localhost:9093/-/ready"]
+      <<: *db-healthcheck
+    logging: *default-logging
+    networks:
+      - bbs-network
+
+networks:
+  bbs-network:
+    driver: bridge
+    name: bbs-network
+
+volumes:
+  postgres-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  elasticsearch-data:
+  alertmanager-data:
+  ml-models:
+  nginx-logs:

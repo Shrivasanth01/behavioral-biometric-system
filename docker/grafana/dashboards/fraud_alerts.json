@@ -1,0 +1,305 @@
+{
+  "title": "Fraud Alert Monitoring",
+  "uid": "fraud-alerts",
+  "version": 1,
+  "schemaVersion": 38,
+  "tags": ["security", "fraud", "monitoring"],
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "15s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "15s", "30s", "1m", "5m", "15m"]
+  },
+  "panels": [
+    {
+      "title": "Active Alerts",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "count(ALERTS{alertstate=\"firing\"})",
+          "legendFormat": "Active"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Fraud Attempts Blocked (24h)",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 3, "y": 0 },
+      "targets": [
+        {
+          "expr": "increase(fraud_detection_attempts_total{status=\"blocked\"}[24h])",
+          "legendFormat": "Blocked"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        }
+      }
+    },
+    {
+      "title": "Suspicious Logins (24h)",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "increase(suspicious_login_attempts_total[24h])",
+          "legendFormat": "Suspicious"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        }
+      }
+    },
+    {
+      "title": "Session Hijack Attempts (24h)",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 9, "y": 0 },
+      "targets": [
+        {
+          "expr": "increase(session_hijacking_detections_total[24h])",
+          "legendFormat": "Hijack Attempts"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        }
+      }
+    },
+    {
+      "title": "MFA Challenge Failures (24h)",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "increase(mfa_challenge_failures_total[24h])",
+          "legendFormat": "MFA Failures"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        }
+      }
+    },
+    {
+      "title": "Device Fingerprint Anomalies (24h)",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 15, "y": 0 },
+      "targets": [
+        {
+          "expr": "increase(device_fingerprint_anomalies_total[24h])",
+          "legendFormat": "Anomalies"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        }
+      }
+    },
+    {
+      "title": "High Risk Users (24h)",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "count(ml_fraud_score > 0.8)",
+          "legendFormat": "High Risk"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 10 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Alert Severity Breakdown",
+      "type": "piechart",
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 3 },
+      "targets": [
+        {
+          "expr": "count by (severity) (ALERTS{alertstate=\"firing\"})",
+          "legendFormat": "{{severity}}"
+        }
+      ],
+      "options": {
+        "displayLabels": ["name", "value", "percent"],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "show": true
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "values": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "title": "Fraud Detection Timeline",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 10, "x": 6, "y": 3 },
+      "targets": [
+        {
+          "expr": "rate(fraud_detection_attempts_total[5m])",
+          "legendFormat": "Total Attempts"
+        },
+        {
+          "expr": "rate(fraud_detection_attempts_total{status=\"blocked\"}[5m])",
+          "legendFormat": "Blocked"
+        },
+        {
+          "expr": "rate(fraud_detection_attempts_total{status=\"flagged\"}[5m])",
+          "legendFormat": "Flagged for Review"
+        },
+        {
+          "expr": "rate(fraud_detection_attempts_total{status=\"approved\"}[5m])",
+          "legendFormat": "Approved"
+        }
+      ],
+      "options": {
+        "legend": { "show": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps"
+        }
+      }
+    },
+    {
+      "title": "Geographic Anomaly Map",
+      "type": "geomap",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 3 },
+      "targets": [
+        {
+          "expr": "fraud_detection_attempts_total{status=\"blocked\"}"
+        }
+      ]
+    },
+    {
+      "title": "Fraud Score by User Segment",
+      "type": "barchart",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 10 },
+      "targets": [
+        {
+          "expr": "avg by (user_segment) (ml_fraud_score)",
+          "legendFormat": "{{user_segment}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "showLabels": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "title": "Alert Event Timeline",
+      "type": "logs",
+      "gridPos": { "h": 7, "w": 16, "x": 8, "y": 10 },
+      "targets": [
+        {
+          "expr": "{job=\"backend\"} |= \"fraud\"",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "title": "Behavioral Biometric Risk Score",
+      "type": "graph",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "expr": "avg by (biometric_type) (behavioral_risk_score)",
+          "legendFormat": "{{biometric_type}}"
+        }
+      ],
+      "options": {
+        "legend": { "show": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "title": "Top Blocked IP Addresses",
+      "type": "table",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 17 },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (source_ip) (rate(fraud_detection_attempts_total{status=\"blocked\"}[24h])))",
+          "legendFormat": "{{source_ip}}"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Value" }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "Blocked IP",
+          "unit": "cps"
+        }
+      }
+    }
+  ]
+}

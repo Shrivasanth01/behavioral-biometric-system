@@ -1,0 +1,219 @@
+groups:
+  - name: backend_alerts
+    interval: 30s
+    rules:
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Backend service is down"
+          description: "Backend service {{ $labels.instance }} has been unreachable for more than 30 seconds."
+          runbook: "https://wiki.bbs-platform.com/runbooks/backend-down"
+
+      - alert: BackendHighErrorRate
+        expr: rate(http_requests_total{job="backend",status=~"5.."}[5m]) / rate(http_requests_total{job="backend"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Backend error rate above 5%"
+          description: "Error rate on {{ $labels.instance }} is {{ $value | humanizePercentage }} over the last 5 minutes."
+          runbook: "https://wiki.bbs-platform.com/runbooks/high-error-rate"
+
+      - alert: BackendHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="backend"}[5m])) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Backend p95 latency above 1s"
+          description: "p95 latency on {{ $labels.instance }} is {{ $value }}s over the last 5 minutes."
+          runbook: "https://wiki.bbs-platform.com/runbooks/high-latency"
+
+      - alert: BackendHighRequestRate
+        expr: rate(http_requests_total{job="backend"}[1m]) > 1000
+        for: 1m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Backend request rate spike"
+          description: "Request rate on {{ $labels.instance }} is {{ $value }} req/s over the last minute."
+
+  - name: ml_alerts
+    interval: 30s
+    rules:
+      - alert: MLServiceDown
+        expr: up{job="ml-service"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: data-science
+        annotations:
+          summary: "ML service is down"
+          description: "ML service {{ $labels.instance }} has been unreachable for more than 30 seconds."
+
+      - alert: MLPredictionLatencyHigh
+        expr: ml_prediction_duration_seconds{quantile="0.95"} > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: data-science
+        annotations:
+          summary: "ML prediction latency high"
+          description: "p95 prediction latency is {{ $value }}s."
+
+      - alert: MLModelAccuracyDrop
+        expr: ml_model_accuracy < 0.85
+        for: 10m
+        labels:
+          severity: critical
+          team: data-science
+        annotations:
+          summary: "ML model accuracy below threshold"
+          description: "Model accuracy dropped to {{ $value | humanizePercentage }}."
+
+      - alert: MLFraudScoreHigh
+        expr: avg(ml_fraud_score{job="ml-service"}) > 0.7
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Elevated fraud scores detected"
+          description: "Average fraud score is {{ $value }} over the last 5 minutes."
+
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 10s
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL instance is unreachable."
+
+      - alert: PostgresHighConnections
+        expr: pg_stat_database_numbackends > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "PostgreSQL high connection count"
+          description: "Database has {{ $value }} active connections."
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 10s
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Redis is down"
+          description: "Redis instance is unreachable."
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Redis memory usage above 85%"
+          description: "Redis memory usage is {{ $value | humanizePercentage }}."
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Low disk space"
+          description: "Disk usage is above 90% on {{ $labels.mountpoint }}."
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80% on {{ $labels.instance }}."
+
+  - name: fraud_alerts
+    interval: 15s
+    rules:
+      - alert: HighFraudAttempts
+        expr: rate(fraud_detection_attempts_total{status="blocked"}[5m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "High fraud attempt rate"
+          description: "Fraud attempts are being blocked at a rate of {{ $value }}/s over the last 5 minutes."
+          runbook: "https://wiki.bbs-platform.com/runbooks/fraud-attempts"
+
+      - alert: AtypicalBehaviorDetected
+        expr: rate(atypical_behavior_alerts_total[5m]) > 5
+        for: 1m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Atypical user behavior detected"
+          description: "Atypical behavior alerts firing at {{ $value }}/s."
+
+      - alert: SessionHijackingAttempt
+        expr: rate(session_hijacking_detections_total[5m]) > 2
+        for: 1m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "Session hijacking attempts detected"
+          description: "Session hijacking attempts at {{ $value }}/s over 5 minutes."
+
+  - name: celery_alerts
+    interval: 30s
+    rules:
+      - alert: CeleryWorkerDown
+        expr: up{job="celery-worker"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Celery worker is down"
+          description: "Celery worker has been unreachable for 30 seconds."
+
+      - alert: CeleryQueueBacklog
+        expr: celery_queue_length > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Celery queue backlog"
+          description: "Celery queue has {{ $value }} pending tasks."
+
+      - alert: CeleryTaskFailureRate
+        expr: rate(celery_task_failed_total[10m]) / rate(celery_task_received_total[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Celery task failure rate high"
+          description: "Task failure rate is {{ $value | humanizePercentage }} over 10 minutes."

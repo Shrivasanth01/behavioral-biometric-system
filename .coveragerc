@@ -1,0 +1,46 @@
+[run]
+source = .
+omit =
+    */tests/*
+    */__pycache__/*
+    */node_modules/*
+    */migrations/*
+    */.next/*
+    */venv/*
+    */env/*
+    *.egg-info/*
+    setup.py
+    conftest.py
+    */alembic/*
+    */docker/*
+    */docs/*
+    */security-dashboard/.next/*
+    */security-dashboard/node_modules/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    pragma: nocover
+    pragma: no-cover
+    def __repr__
+    def __str__
+    raise NotImplementedError
+    if __name__ == "__main__"
+    if settings.PROMETHEUS_ENABLED
+    if self._is_global_loaded:
+    pass
+    raise ImportError
+
+ignore_errors = True
+
+[html]
+directory = coverage_html
+
+[xml]
+output = coverage.xml
+
+[paths]
+source =
+    backend/
+    ml/
+    .

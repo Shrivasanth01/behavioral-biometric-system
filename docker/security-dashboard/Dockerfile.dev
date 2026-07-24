@@ -1,0 +1,15 @@
+FROM node:18-alpine
+
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+COPY security-dashboard/package.json security-dashboard/package-lock.json ./
+
+RUN npm ci
+
+EXPOSE 3001
+
+ENV NEXT_TELEMETRY_DISABLED=1
+
+CMD ["npm", "run", "dev"]

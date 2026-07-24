@@ -1,0 +1,169 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "backend"
+      - "python"
+    assignees:
+      - "backend-team"
+    reviewers:
+      - "backend-team-lead"
+    allow:
+      - dependency-type: "direct"
+    ignore:
+      - dependency-name: "numpy"
+        versions: [">=2.0.0"]
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  - package-ecosystem: "pip"
+    directory: "/ml-service"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "ml-service"
+      - "python"
+    assignees:
+      - "data-science-team"
+    reviewers:
+      - "ml-team-lead"
+    allow:
+      - dependency-type: "direct"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "frontend"
+      - "javascript"
+    assignees:
+      - "frontend-team"
+    reviewers:
+      - "frontend-team-lead"
+    allow:
+      - dependency-type: "direct"
+    ignore:
+      - dependency-name: "next"
+        versions: [">=14.0.0"]
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+    versioning-strategy: increase
+
+  - package-ecosystem: "npm"
+    directory: "/security-dashboard"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security-dashboard"
+      - "javascript"
+    assignees:
+      - "security-team"
+    reviewers:
+      - "security-team-lead"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    versioning-strategy: increase
+
+  - package-ecosystem: "docker"
+    directory: "/docker/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+      - "backend"
+    assignees:
+      - "platform-team"
+
+  - package-ecosystem: "docker"
+    directory: "/docker/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+      - "frontend"
+
+  - package-ecosystem: "docker"
+    directory: "/docker/nginx"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+      - "nginx"
+
+  - package-ecosystem: "docker"
+    directory: "/docker/ml"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+      - "ml-service"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "ci-cd"
+    assignees:
+      - "platform-team"
+    commit-message:
+      prefix: "chore"
+      include: "scope"

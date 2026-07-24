@@ -1,0 +1,88 @@
+# Git
+.git
+.gitignore
+.gitattributes
+.github
+
+# Docker
+docker-compose*.yml
+.dockerignore
+Dockerfile*
+Dockerfile.dev
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+*.db
+
+# Node
+node_modules/
+.next/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Flutter
+.metadata
+*.iml
+.idea/
+build/
+*.apk
+*.aab
+*.ipa
+flutter_*.png
+*.jks
+*.keystore
+
+# ML
+ml-service/models/*.pt
+ml-service/models/*.pkl
+ml-service/models/*.onnx
+!ml-service/models/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.bak
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.cert
+secrets/
+
+# Logs
+*.log
+logs/
+
+# Temp
+tmp/
+temp/
+*.tmp
+
+# Documentation
+*.md
+!docker/README.md

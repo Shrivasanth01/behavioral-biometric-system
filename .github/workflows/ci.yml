@@ -1,0 +1,386 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop, "feature/**", "fix/**"]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "18"
+  FLUTTER_VERSION: "3.16.0"
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: bbs_test
+          POSTGRES_USER: bbs_test
+          POSTGRES_PASSWORD: bbs_test_pass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libpq-dev curl
+
+      - name: Install Python Dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -e .
+
+      - name: Run Linting
+        working-directory: backend
+        run: |
+          pip install ruff
+          ruff check app/ tests/
+          ruff format --check app/ tests/
+
+      - name: Run Type Checking
+        working-directory: backend
+        run: |
+          pip install mypy
+          mypy app/ --ignore-missing-imports --strict
+
+      - name: Run Security Scan
+        working-directory: backend
+        run: |
+          pip install bandit safety
+          bandit -r app/ -x tests/ -f json -o bandit-report.json || true
+          safety check -r requirements.txt --full-report || true
+
+      - name: Run Tests with Coverage
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://bbs_test:bbs_test_pass@localhost:5432/bbs_test
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: test-secret-key
+          ENVIRONMENT: test
+        run: |
+          pip install pytest pytest-asyncio pytest-cov
+          pytest tests/ \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            --junitxml=test-results.xml \
+            -v --timeout=120
+
+      - name: Upload Backend Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: backend/test-results.xml
+
+  frontend-tests:
+    name: Frontend Tests
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Linting
+        run: npm run lint
+
+      - name: Run Type Checking
+        run: npm run typecheck
+
+      - name: Run Unit Tests
+        run: npm run test:ci
+
+      - name: Run E2E Tests
+        run: npm run test:e2e || true
+
+      - name: Build Frontend
+        run: npm run build
+
+      - name: Upload Frontend Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          directory: frontend/coverage
+          flags: frontend
+          fail_ci_if_error: false
+
+  security-dashboard-tests:
+    name: Security Dashboard Tests
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: security-dashboard
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: security-dashboard/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Linting
+        run: npm run lint
+
+      - name: Run Type Checking
+        run: npm run typecheck
+
+      - name: Run Tests
+        run: npm run test:ci
+
+      - name: Build Dashboard
+        run: npm run build
+
+  ml-tests:
+    name: ML Service Tests
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ml-service
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: ml-service/requirements*.txt
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -e .
+
+      - name: Run Linting
+        run: |
+          pip install ruff
+          ruff check app/ tests/
+          ruff format --check app/ tests/
+
+      - name: Run ML Tests
+        run: |
+          pip install pytest pytest-cov
+          pytest tests/ \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -v --timeout=300
+
+      - name: Run Model Validation
+        run: |
+          python -m app.scripts.validate_model --threshold 0.85
+
+      - name: Upload ML Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ml-service/coverage.xml
+          flags: ml-service
+          fail_ci_if_error: false
+
+  mobile-tests:
+    name: Mobile App Tests
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Run Analyzer
+        run: flutter analyze
+
+      - name: Run Tests
+        run: flutter test --coverage --machine > test-results.json
+
+      - name: Upload Mobile Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          directory: mobile/coverage
+          flags: mobile
+          fail_ci_if_error: false
+
+  docker-build:
+    name: Docker Image Build
+    runs-on: ubuntu-22.04
+    needs: [backend-tests, frontend-tests, security-dashboard-tests, ml-tests, mobile-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - backend
+          - frontend
+          - security-dashboard
+          - ml-service
+          - nginx
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ matrix.image }}
+          tags: |
+            type=sha,prefix=,suffix=,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and Cache Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/${{ matrix.image }}/Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ matrix.image }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Upload Trivy Results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: ${{ matrix.image }}
+
+  notify:
+    name: Notification
+    runs-on: ubuntu-22.04
+    needs: [docker-build]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Send Slack Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ needs.docker-build.result }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow,job
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+        if: success()
+
+      - name: Send Failure Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          fields: repo,message,commit,author,action,ref,workflow
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+        if: failure()

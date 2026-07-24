@@ -1,0 +1,145 @@
+global:
+  resolve_timeout: 5m
+  slack_api_url: "${SLACK_WEBHOOK_URL}"
+  pagerduty_url: "https://events.pagerduty.com/v2/enqueue"
+  opsgenie_api_url: "https://api.opsgenie.com/v2"
+  opsgenie_api_key: "${OPSGENIE_API_KEY}"
+
+templates:
+  - "/etc/alertmanager/templates/*.tmpl"
+
+route:
+  group_by: ["alertname", "severity", "team", "service"]
+  group_wait: 10s
+  group_interval: 2m
+  repeat_interval: 4h
+  receiver: "default"
+  routes:
+    - receiver: "critical-pager"
+      matchers:
+        - severity = critical
+      repeat_interval: 15m
+      continue: true
+
+    - receiver: "security-team"
+      matchers:
+        - team = security
+      group_wait: 5s
+      repeat_interval: 10m
+
+    - receiver: "backend-team"
+      matchers:
+        - team = backend
+      repeat_interval: 30m
+
+    - receiver: "data-science-team"
+      matchers:
+        - team = "data-science"
+      repeat_interval: 1h
+
+    - receiver: "platform-team"
+      matchers:
+        - team = platform
+      repeat_interval: 1h
+
+    - receiver: "warning-queue"
+      matchers:
+        - severity = warning
+      repeat_interval: 6h
+
+    - receiver: "default"
+      matchers:
+        - severity =~ "critical|warning"
+      repeat_interval: 4h
+
+receivers:
+  - name: "default"
+    slack_configs:
+      - channel: "#bbs-alerts"
+        title: '{{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+        actions:
+          - type: button
+            text: "View on Grafana"
+            url: "https://grafana.bbs-platform.com/d/{{ .GroupLabels.alertname }}"
+          - type: button
+            text: "Runbook"
+            url: "https://wiki.bbs-platform.com/runbooks/{{ .GroupLabels.alertname | toLower }}"
+
+  - name: "critical-pager"
+    pagerduty_configs:
+      - routing_key: "${PAGERDUTY_ROUTING_KEY}"
+        severity: critical
+        description: '{{ template "pagerduty.description" . }}'
+        client: "BBS AlertManager"
+        client_url: "https://alertmanager.bbs-platform.com"
+        images:
+          - src: "https://bbs-platform.com/alert-icon.png"
+            alt: "Critical Alert"
+    slack_configs:
+      - channel: "#bbs-critical"
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: '{{ template "slack.text" . }}'
+        color: danger
+        send_resolved: true
+
+  - name: "security-team"
+    slack_configs:
+      - channel: "#bbs-security"
+        title: '🔒 Security Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ template "slack.text" . }}'
+        color: warning
+        send_resolved: true
+    opsgenie_configs:
+      - api_key: "${OPSGENIE_API_KEY}"
+        priority: P2
+        responders:
+          - name: "security-team"
+            type: team
+
+  - name: "backend-team"
+    slack_configs:
+      - channel: "#bbs-backend"
+        title: '⚙️ Backend Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ template "slack.text" . }}'
+        color: warning
+        send_resolved: true
+
+  - name: "data-science-team"
+    slack_configs:
+      - channel: "#bbs-ml"
+        title: '🧠 ML Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ template "slack.text" . }}'
+        color: warning
+        send_resolved: true
+
+  - name: "platform-team"
+    slack_configs:
+      - channel: "#bbs-platform"
+        title: '🖥️ Platform Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ template "slack.text" . }}'
+        color: warning
+        send_resolved: true
+
+  - name: "warning-queue"
+    slack_configs:
+      - channel: "#bbs-warnings"
+        title: '⚠️ Warning: {{ .GroupLabels.alertname }}'
+        text: '{{ template "slack.text" . }}'
+        color: warning
+        send_resolved: true
+        icon_emoji: ":warning:"
+
+inhibit_rules:
+  - source_matchers:
+      - severity = critical
+    target_matchers:
+      - severity =~ "warning|info"
+    equal: ["alertname", "service"]
+
+  - source_matchers:
+      - alertname = "BackendDown"
+    target_matchers:
+      - alertname =~ ".*HighErrorRate|.*HighLatency"
+    equal: ["instance"]

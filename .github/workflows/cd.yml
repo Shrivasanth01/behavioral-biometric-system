@@ -1,0 +1,302 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: "Release version"
+        required: false
+        type: string
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_TAG: ${{ github.sha }}
+  KUBE_NAMESPACE: bbs-platform
+  DEPLOY_TIMEOUT: 300
+
+jobs:
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image_tag: ${{ env.IMAGE_TAG }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: backend
+            dockerfile: docker/backend/Dockerfile
+            context: .
+          - name: frontend
+            dockerfile: docker/frontend/Dockerfile
+            context: .
+          - name: security-dashboard
+            dockerfile: docker/security-dashboard/Dockerfile
+            context: .
+          - name: ml-service
+            dockerfile: docker/ml/Dockerfile
+            context: .
+          - name: nginx
+            dockerfile: docker/nginx/Dockerfile
+            context: docker/nginx
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version Extraction
+        id: version
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-${GITHUB_SHA::8}")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ matrix.service.name }}
+          tags: |
+            type=sha,prefix=,suffix=,format=short
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          provenance: true
+          sbom: true
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ matrix.service.name }}:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service.name }}
+          path: sbom-${{ matrix.service.name }}.spdx.json
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-22.04
+    needs: [build-and-push]
+    environment:
+      name: staging
+      url: https://staging.bbs-platform.com
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name bbs-staging --region ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/backend \
+            backend=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/backend:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl set image deployment/frontend \
+            frontend=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/frontend:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl set image deployment/security-dashboard \
+            security-dashboard=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/security-dashboard:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl set image deployment/ml-service \
+            ml-service=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/ml-service:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl set image deployment/nginx \
+            nginx=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/nginx:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+
+      - name: Verify Staging Deployment
+        run: |
+          kubectl rollout status deployment/backend -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/frontend -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/security-dashboard -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/ml-service -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/nginx -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-22.04
+    needs: [deploy-staging]
+    environment:
+      name: production
+      url: https://app.bbs-platform.com
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name bbs-production --region ${{ secrets.AWS_REGION }}
+
+      - name: Canary Deployment (10%)
+        run: |
+          kubectl set image deployment/backend-canary \
+            backend=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/backend:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl rollout status deployment/backend-canary \
+            -n ${{ env.KUBE_NAMESPACE }} --timeout=120s
+
+      - name: Health Check Canary
+        run: |
+          CANARY_POD=$(kubectl get pods -n ${{ env.KUBE_NAMESPACE }} -l app=backend-canary -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec $CANARY_POD -n ${{ env.KUBE_NAMESPACE }} -- curl -sf http://localhost:8000/api/v1/health
+          ERROR_RATE=$(kubectl exec $CANARY_POD -n ${{ env.KUBE_NAMESPACE }} -- curl -s http://localhost:8000/api/v1/metrics | grep 'http_requests_total{status="5"}' | awk '{print $2}')
+          if [ "$ERROR_RATE" != "" ] && [ "$ERROR_RATE" -gt 5 ]; then
+            echo "Error rate too high in canary, aborting deployment"
+            kubectl rollout undo deployment/backend-canary -n ${{ env.KUBE_NAMESPACE }}
+            exit 1
+          fi
+
+      - name: Full Rollout
+        run: |
+          kubectl set image deployment/backend \
+            backend=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/backend:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl set image deployment/frontend \
+            frontend=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/frontend:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl set image deployment/security-dashboard \
+            security-dashboard=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/security-dashboard:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl set image deployment/ml-service \
+            ml-service=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/ml-service:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          kubectl set image deployment/nginx \
+            nginx=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/nginx:${{ env.IMAGE_TAG }} \
+            -n ${{ env.KUBE_NAMESPACE }}
+
+      - name: Verify Production Deployment
+        run: |
+          kubectl rollout status deployment/backend -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/frontend -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/security-dashboard -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/ml-service -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/nginx -n ${{ env.KUBE_NAMESPACE }} --timeout=${{ env.DEPLOY_TIMEOUT }}s
+
+      - name: Post-Deployment Smoke Tests
+        run: |
+          curl -sf https://app.bbs-platform.com/api/v1/health
+          curl -sf https://app.bbs-platform.com/ | grep -q "Behavioral Biometric"
+          curl -sf https://app.bbs-platform.com/dashboard/ | grep -q "Security Dashboard"
+          curl -sf https://app.bbs-platform.com/api/v1/metrics | grep -q "http_requests_total"
+
+  notify:
+    name: Deploy Notification
+    runs-on: ubuntu-22.04
+    needs: [deploy-staging, deploy-production]
+    if: always()
+
+    steps:
+      - name: Check Event Context
+        id: context
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=staging" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send Deployment Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ needs.deploy-staging.result == 'success' && 'success' || 'failure' }}
+          fields: repo,message,commit,author,action,ref,workflow
+          text: |
+            *Deployment to ${{ steps.context.outputs.environment }}*
+            Status: ${{ needs.deploy-staging.result }}
+            Version: ${{ needs.build-and-push.outputs.version }}
+            Image Tag: ${{ needs.build-and-push.outputs.image_tag }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Create GitHub Release
+        if: success() && github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.build-and-push.outputs.version }}
+          name: Release v${{ needs.build-and-push.outputs.version }}
+          body: |
+            ## Release v${{ needs.build-and-push.outputs.version }}
+
+            ### Changes
+            ${{ github.event.head_commit.message }}
+
+            ### Docker Images
+            - `${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/backend:${{ env.IMAGE_TAG }}`
+            - `${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/frontend:${{ env.IMAGE_TAG }}`
+            - `${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/security-dashboard:${{ env.IMAGE_TAG }}`
+            - `${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/ml-service:${{ env.IMAGE_TAG }}`
+            - `${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/nginx:${{ env.IMAGE_TAG }}`
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

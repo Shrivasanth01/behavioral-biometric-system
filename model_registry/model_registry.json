@@ -1,0 +1,40 @@
+{
+  "existing_user": [
+    {
+      "user_id": "existing_user",
+      "version": 1,
+      "model_path": "C:\\Users\\shriv\\AppData\\Local\\Temp\\tmp4q61cc8i\\existing_user\\model_v1.pkl",
+      "created_at": "2026-06-14T10:34:20.654030",
+      "metrics": {
+        "n_samples": 6,
+        "threshold": -0.3,
+        "session_count": 6
+      },
+      "status": "archived"
+    },
+    {
+      "user_id": "existing_user",
+      "version": 1,
+      "model_path": "C:\\Users\\shriv\\AppData\\Local\\Temp\\tmpfwm7ic3_\\existing_user\\model_v1.pkl",
+      "created_at": "2026-06-14T10:38:22.495351",
+      "metrics": {
+        "n_samples": 6,
+        "threshold": -0.3,
+        "session_count": 6
+      },
+      "status": "archived"
+    },
+    {
+      "user_id": "existing_user",
+      "version": 1,
+      "model_path": "C:\\Users\\shriv\\AppData\\Local\\Temp\\tmphfn1e2nw\\existing_user\\model_v1.pkl",
+      "created_at": "2026-06-14T10:44:38.381680",
+      "metrics": {
+        "n_samples": 6,
+        "threshold": -0.3,
+        "session_count": 6
+      },
+      "status": "active"
+    }
+  ]
+}
