@@ -1,4 +1,4 @@
-FROM node:18-alpine AS deps
+FROM node:26-alpine AS deps
 
 RUN apk add --no-cache libc6-compat
 
@@ -8,7 +8,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 
 RUN npm ci --only=production
 
-FROM node:18-alpine AS builder
+FROM node:26-alpine AS builder
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ ARG NEXT_PUBLIC_WS_URL
 
 RUN npm run build
 
-FROM node:18-alpine AS runner
+FROM node:26-alpine AS runner
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S -D -H -u 1001 -h /app -s /sbin/nologin -G nodejs -g nodejs nextjs
