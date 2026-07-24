@@ -15,7 +15,7 @@
     "lucide-react": "^0.298.0",
     "recharts": "^2.10.3",
     "clsx": "^2.0.0",
-    "tailwind-merge": "^2.2.0",
+    "tailwind-merge": "^3.6.0",
     "date-fns": "^3.0.6",
     "jose": "^5.1.3"
   },
