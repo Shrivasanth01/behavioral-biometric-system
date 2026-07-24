@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir --user --upgrade pip && \
     --extra-index-url https://download.pytorch.org/whl/cpu \
     -r requirements.txt -r requirements-prod.txt
 
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 RUN groupadd -r bbs-ml && useradd -r -g bbs-ml -d /app -s /sbin/nologin bbs-ml
 
