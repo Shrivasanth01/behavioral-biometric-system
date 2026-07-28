@@ -8,7 +8,7 @@ class BehavioralTracker {
     this.config = Object.assign({
       userId: null,
       sessionId: null,
-      endpoint: '/api/events',
+      endpoint: '/api/v1/telemetry/batch',
       batchInterval: 5000,
       batchSize: 50,
       throttleMousemove: 50,
@@ -678,10 +678,14 @@ class BehavioralTracker {
   }
 
   getPayload() {
+    const fpStr = this._fingerprint 
+      ? (typeof this._fingerprint === 'string' ? this._fingerprint : this._fingerprint.combinedHash || JSON.stringify(this._fingerprint))
+      : null;
     const payload = {
       session_id: this.sessionId,
       user_id: this.userId,
       device_type: 'web',
+      device_fingerprint: fpStr,
       events: this.events,
       fingerprint: this._fingerprint,
       event_count: this.events.length,

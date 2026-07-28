@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRightLeft, CreditCard, Smartphone, HandCoins, QrCode, Wallet } from 'lucide-react';
+import { ArrowRightLeft, CreditCard, Smartphone, Coins as HandCoins, QrCode, Wallet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const actions = [

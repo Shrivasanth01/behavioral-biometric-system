@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Landmark, ArrowRightLeft, CreditCard, Users,
-  HandCoins, ArrowUpDown, UserCircle, ChevronLeft, ChevronRight,
+  Coins as HandCoins, ArrowUpDown, UserCircle, ChevronLeft, ChevronRight,
   Building2, LogOut, Shield,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';

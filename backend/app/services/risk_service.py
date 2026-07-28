@@ -44,7 +44,7 @@ class RiskService:
             user_id, transaction_amount, session_id
         )
 
-        weights = {"ml": 0.4, "rules": 0.35, "heuristic": 0.25}
+        weights = {"ml": 0.65, "rules": 0.25, "heuristic": 0.10}
         final_score = (
             ml_score * weights["ml"]
             + rules_score * weights["rules"]
@@ -272,6 +272,21 @@ class RiskService:
         )
         high_sessions = high_risk_sessions.scalar() or 0
 
+        fraud_saved_result = await self.db.execute(
+            select(func.sum(Transaction.amount)).where(
+                Transaction.created_at >= today_start,
+                Transaction.status == TransactionStatus.BLOCKED,
+            )
+        )
+        total_fraud_saved = float(fraud_saved_result.scalar() or 0.0)
+        
+        models_result = await self.db.execute(
+            select(MlModel.metrics).where(MlModel.is_active == True)
+        )
+        metrics_list = models_result.scalars().all()
+        accuracies = [m.get("accuracy", 0.90) for m in metrics_list if isinstance(m, dict)]
+        avg_accuracy = sum(accuracies) / len(accuracies) if accuracies else 0.90
+
         return {
             "total_users": total_users,
             "active_users": active_users,
@@ -281,8 +296,8 @@ class RiskService:
             "critical_alerts": critical,
             "high_risk_sessions": high_sessions,
             "avg_risk_score": round(avg_risk_score, 4),
-            "total_fraud_saved": round(blocked_txns * random.uniform(5000, 15000), 2),
-            "model_accuracy": round(random.uniform(0.88, 0.96), 4),
+            "total_fraud_saved": round(total_fraud_saved, 2),
+            "model_accuracy": round(avg_accuracy, 4),
         }
 
     async def get_risk_trends(self, days: int = 7) -> list[dict]:
@@ -350,19 +365,45 @@ class RiskService:
         return distribution
 
     async def _ml_risk_score(self, user_id: int, session_id: Optional[str] = None) -> float:
+        if not session_id:
+            return 0.5
+            
         result = await self.db.execute(
-            select(MlModel).where(
-                MlModel.is_active == True,
-                or_(MlModel.user_id == user_id, MlModel.user_id.is_(None)),
-            ).order_by(desc(MlModel.trained_at)).limit(1)
+            select(BehavioralEvent)
+            .where(BehavioralEvent.session_id == session_id)
+            .order_by(BehavioralEvent.server_timestamp)
         )
-        model = result.scalar_one_or_none()
-
-        if model and model.metrics:
-            base_accuracy = model.metrics.get("accuracy", 0.85)
-            return random.uniform(max(0, 0.5 - base_accuracy), min(1, 1.5 - base_accuracy))
-
-        return random.uniform(0.1, 0.3)
+        events = result.scalars().all()
+        
+        if not events:
+            return 0.5
+            
+        event_dicts = []
+        for e in events:
+            evt_dict = {
+                "session_id": e.session_id,
+                "type": e.event_type,
+                "timestamp": e.client_timestamp.timestamp() if e.client_timestamp else e.server_timestamp.timestamp(),
+            }
+            if e.event_data:
+                evt_dict.update(e.event_data)
+            event_dicts.append(evt_dict)
+            
+        import asyncio
+        import concurrent.futures
+        from ml.inference_pipeline import InferencePipeline
+        from ml.config import MLConfig
+        
+        def _run_inference():
+            pipeline = InferencePipeline(MLConfig())
+            return pipeline.score(str(user_id), event_dicts)
+            
+        loop = asyncio.get_running_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            score_result = await loop.run_in_executor(pool, _run_inference)
+            
+        ml_score_0_100 = score_result.get("ml_score", 50.0)
+        return ml_score_0_100 / 100.0
 
     async def _rules_risk_score(
         self,

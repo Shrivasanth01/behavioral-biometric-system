@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
-from passlib.context import CryptContext
+import bcrypt
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import pyotp
@@ -34,7 +34,20 @@ from app.utils import (
     hash_device_fingerprint,
 )
 
-pwd_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=settings.BCRYPT_ROUNDS)
+
+def hash_password(password: str) -> str:
+    pw_bytes = password.encode('utf-8')[:72]
+    salt = bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
+    return bcrypt.hashpw(pw_bytes, salt).decode('utf-8')
+
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    try:
+        pw_bytes = password.encode('utf-8')[:72]
+        hash_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(pw_bytes, hash_bytes)
+    except Exception:
+        return False
 
 
 class AuthService:
@@ -59,10 +72,7 @@ class AuthService:
         if existing.scalar_one_or_none():
             raise ConflictException("User with this email or phone already exists")
 
-        # Truncate to bcrypt's 72-byte limit to avoid ValueError from backend
-        pw_bytes = password.encode('utf-8')[:72]
-        pw_for_hash = pw_bytes.decode('utf-8', errors='ignore')
-        password_hash = pwd_context.hash(pw_for_hash)
+        password_hash = hash_password(password)
         user = User(
             email=email,
             phone=cleaned_phone,
@@ -104,10 +114,7 @@ class AuthService:
         if user.status == UserStatus.SUSPENDED:
             raise ForbiddenException("Account is suspended")
 
-        # Verify using same 72-byte truncation rule used during registration
-        pw_bytes = password.encode('utf-8')[:72]
-        pw_for_verify = pw_bytes.decode('utf-8', errors='ignore')
-        if not pwd_context.verify(pw_for_verify, user.password_hash):
+        if not verify_password(password, user.password_hash):
             user.failed_login_attempts += 1
             if user.failed_login_attempts >= 5:
                 user.status = UserStatus.LOCKED
@@ -115,12 +122,6 @@ class AuthService:
             await self.db.flush()
             remaining_attempts = 5 - user.failed_login_attempts
             raise UnauthorizedException(f"Invalid credentials. {remaining_attempts} attempts remaining")
-
-        if pwd_context.needs_update(user.password_hash):
-            # Re-hash using truncated password bytes
-            pw_bytes = password.encode('utf-8')[:72]
-            pw_for_hash = pw_bytes.decode('utf-8', errors='ignore')
-            user.password_hash = pwd_context.hash(pw_for_hash)
 
         user.failed_login_attempts = 0
         user.locked_until = None
@@ -208,9 +209,8 @@ class AuthService:
         if not user:
             return "If the email exists, a reset link has been sent"
 
-        from app.utils import generate_reset_token
         reset_token = generate_reset_token()
-        user.reset_token = pwd_context.hash(reset_token)
+        user.reset_token = hash_password(reset_token)
         user.reset_token_expires = datetime.now(timezone.utc) + timedelta(hours=1)
         await self.db.flush()
 
@@ -230,17 +230,14 @@ class AuthService:
 
         user = None
         for u in users:
-            if u.reset_token and pwd_context.verify(reset_token, u.reset_token):
+            if u.reset_token and verify_password(reset_token, u.reset_token):
                 user = u
                 break
 
         if not user:
             raise BadRequestException("Invalid or expired reset token")
 
-        # Truncate to bcrypt's 72-byte limit before hashing
-        pw_bytes = new_password.encode('utf-8')[:72]
-        pw_for_hash = pw_bytes.decode('utf-8', errors='ignore')
-        user.password_hash = pwd_context.hash(pw_for_hash)
+        user.password_hash = hash_password(new_password)
         user.reset_token = None
         user.reset_token_expires = None
         user.failed_login_attempts = 0

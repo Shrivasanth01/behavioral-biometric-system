@@ -50,6 +50,11 @@ async def ingest_event_batch(
     ip = get_client_ip(request)
     ua = get_user_agent(request)
     event_ids = []
+    
+    session_id = None
+    if batch.events:
+        session_id = batch.events[0].session_id
+
     for event in batch.events:
         event_data = event.model_dump()
         if current_user and not event_data.get("user_id"):
@@ -60,6 +65,11 @@ async def ingest_event_batch(
             event_data["user_agent"] = ua
         created = await service.ingest_event(event_data)
         event_ids.append(created.id)
+        
+    if current_user and session_id:
+        from app.tasks import process_behavioral_events
+        process_behavioral_events.delay(session_id, current_user.id)
+
     return {"success": True, "event_ids": event_ids, "count": len(event_ids)}
 
 

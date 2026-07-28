@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,18 +38,20 @@ async def register(
         from app.middleware.auth import create_access_token, create_refresh_token
         service = AuthService(db)
         user = await service.register(req.email, req.phone, req.full_name, req.password)
-        access_token = create_access_token(user.id, user.role.value)
+        role_str = str(user.role.value if hasattr(user.role, "value") else user.role)
+        access_token = create_access_token(user.id, role_str)
         refresh_token = create_refresh_token(user.id)
         await audit_logger(request, "user_registered", "user", str(user.id), {"email": req.email}, db, None)
         return {
             "success": True,
+            "user_id": user.id,
             "data": {
                 "user": {
                     "id": str(user.id),
                     "email": user.email,
                     "name": user.full_name,
                     "phone": user.phone,
-                    "role": user.role.value.lower(),
+                    "role": role_str.lower(),
                     "mfaEnabled": user.mfa_enabled,
                     "behavioralProfileStatus": "pending",
                     "trustedDevices": [],
@@ -68,6 +70,8 @@ async def register(
                 },
             },
         }
+    except HTTPException as e:
+        raise e
     except Exception as e:
         logging.exception("Unhandled exception in register endpoint")
         # Include a brief error detail for debugging; remove in production.
@@ -181,7 +185,8 @@ async def enable_mfa(
     db: AsyncSession = Depends(get_db),
 ):
     service = AuthService(db)
-    success, message = await service.enable_mfa(current_user, current_user.mfa_method.value if current_user.mfa_method else "TOTP", req.otp_code)
+    mfa_method = current_user.mfa_method.value if hasattr(current_user.mfa_method, "value") else (str(current_user.mfa_method) if current_user.mfa_method else "TOTP")
+    success, message = await service.enable_mfa(current_user, mfa_method, req.otp_code)
     if not success:
         raise BadRequestException(message)
     await audit_logger(request, "mfa_enabled", "user", str(current_user.id), None, db, current_user)

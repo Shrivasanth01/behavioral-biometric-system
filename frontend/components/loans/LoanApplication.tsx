@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { HandCoins, Calculator } from 'lucide-react';
+import { Coins as HandCoins, Calculator } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { EMICalculator } from './EMICalculator';
 import { calculateEMI, formatCurrency } from '@/lib/utils';

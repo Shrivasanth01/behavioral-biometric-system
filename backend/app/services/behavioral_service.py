@@ -178,50 +178,21 @@ class BehavioralService:
         if not events:
             return {}
 
-        event_types = {}
-        time_deltas = []
-        mouse_events = []
-        key_events = []
-        prev_time = None
+        event_dicts = []
+        for e in events:
+            evt_dict = {
+                "session_id": e.session_id,
+                "type": e.event_type,
+                "timestamp": e.client_timestamp.timestamp() if e.client_timestamp else e.server_timestamp.timestamp(),
+            }
+            if e.event_data:
+                evt_dict.update(e.event_data)
+            event_dicts.append(evt_dict)
 
-        for event in events:
-            et = event.event_type
-            event_types[et] = event_types.get(et, 0) + 1
-
-            if et == "mousemove" or et == "mouseclick":
-                mouse_events.append(event)
-            elif et == "keydown" or et == "keyup":
-                key_events.append(event)
-
-            if prev_time and event.client_timestamp:
-                delta = (event.client_timestamp - prev_time).total_seconds()
-                if 0 < delta < 60:
-                    time_deltas.append(delta)
-            if event.client_timestamp:
-                prev_time = event.client_timestamp
-
-        avg_time_delta = sum(time_deltas) / len(time_deltas) if time_deltas else 0
-        typing_speed = len(key_events) / (sum(time_deltas) if time_deltas else 1)
-
-        features = {
-            "total_events": len(events),
-            "event_type_distribution": event_types,
-            "avg_time_between_events": round(avg_time_delta, 4),
-            "typing_speed_events_per_sec": round(typing_speed, 4),
-            "mouse_event_count": len(mouse_events),
-            "key_event_count": len(key_events),
-            "session_duration_seconds": 0,
-            "unique_event_types": len(event_types),
-        }
-
-        if events and len(events) >= 2:
-            first = events[0]
-            last = events[-1]
-            if first.server_timestamp and last.server_timestamp:
-                duration = (last.server_timestamp - first.server_timestamp).total_seconds()
-                features["session_duration_seconds"] = round(duration, 2)
-
-        return features
+        from ml.feature_engineering import FeatureEngine
+        from ml.config import MLConfig
+        engine = FeatureEngine(MLConfig())
+        return engine.extract_all(event_dicts)
 
     async def update_profile_from_session(self, user_id: int, session_id: str):
         profile = await self.get_user_profile(user_id)

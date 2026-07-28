@@ -1,12 +1,31 @@
 import sys
 import os
 import json
-import numpy as np
+
+try:
+    import numpy as np
+except ImportError:
+    import random as _py_random
+    class _DummyRandomState:
+        def __init__(self, seed=42):
+            self._rng = _py_random.Random(seed)
+        def randint(self, a, b):
+            return self._rng.randint(a, b)
+        def random(self):
+            return self._rng.random()
+        def randn(self, r, c):
+            return [[self._rng.random() for _ in range(c)] for _ in range(r)]
+    class _DummyRandom:
+        RandomState = _DummyRandomState
+    class _DummyNP:
+        random = _DummyRandom()
+    np = _DummyNP()
+
 import pytest
 import pytest_asyncio
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-from typing import AsyncGenerator, Generator, Optional
+from typing import AsyncGenerator, Generator, Optional, Any
 from contextlib import asynccontextmanager
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -18,18 +37,24 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jose import jwt
 
-from ml.config import MLConfig
-from ml.feature_engineering import FeatureEngine
-from ml.models.user_model import UserModel
-from ml.models.global_model import GlobalModel
-from ml.training_pipeline import TrainingPipeline
-from ml.inference_pipeline import InferencePipeline
-from ml.drift_detection import DriftDetector
-from ml.risk_engine import HybridRiskEngine
-from ml.explainability import Explainer
-from ml.behavioral_profile import BehavioralProfile, BehavioralProfileManager
-from ml.model_registry import ModelRegistry
-from ml.evaluation import Evaluator
+try:
+    from ml.config import MLConfig
+    from ml.feature_engineering import FeatureEngine
+    from ml.models.user_model import UserModel
+    from ml.models.global_model import GlobalModel
+    from ml.training_pipeline import TrainingPipeline
+    from ml.inference_pipeline import InferencePipeline
+    from ml.drift_detection import DriftDetector
+    from ml.risk_engine import HybridRiskEngine
+    from ml.explainability import Explainer
+    from ml.behavioral_profile import BehavioralProfile, BehavioralProfileManager
+    from ml.model_registry import ModelRegistry
+    from ml.evaluation import Evaluator
+except (ImportError, ModuleNotFoundError):
+    MLConfig = FeatureEngine = UserModel = GlobalModel = TrainingPipeline = None
+    InferencePipeline = DriftDetector = HybridRiskEngine = Explainer = None
+    BehavioralProfile = BehavioralProfileManager = ModelRegistry = Evaluator = None
+
 
 os.environ["ENVIRONMENT"] = "test"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test.db"
@@ -63,6 +88,9 @@ async def test_db() -> AsyncGenerator[AsyncSession, None]:
         echo=False,
     )
     from app.database import Base
+    import app.models.user
+    import app.models.behavioral
+    import app.models.transaction
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -78,13 +106,32 @@ async def test_db() -> AsyncGenerator[AsyncSession, None]:
     await engine.dispose()
 
 
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def init_sqlite_test_db():
+    engine = create_async_engine("sqlite+aiosqlite:///./test.db", echo=False)
+    from app.database import Base
+    import app.models.user
+    import app.models.behavioral
+    import app.models.transaction
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await engine.dispose()
+    yield
+    if os.path.exists("./test.db"):
+        try:
+            os.remove("./test.db")
+        except OSError:
+            pass
+
+
 @pytest_asyncio.fixture
 async def db_session(test_db: AsyncSession) -> AsyncSession:
     return test_db
 
 
 @pytest.fixture
-def mock_db() -> AsyncMock:
+def mock_db(app: FastAPI):
+    from app.database import get_db
     db = AsyncMock(spec=AsyncSession)
     db.execute = AsyncMock()
     db.flush = AsyncMock()
@@ -94,7 +141,13 @@ def mock_db() -> AsyncMock:
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
     db.close = AsyncMock()
-    return db
+
+    async def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield db
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture
@@ -173,7 +226,7 @@ def evaluator() -> Evaluator:
     return Evaluator()
 
 
-def make_keystroke_events(n: int = 20, rng: Optional[np.random.RandomState] = None) -> list:
+def make_keystroke_events(n: int = 20, rng: Any = None) -> list:
     if rng is None:
         rng = np.random.RandomState(42)
     events = []
@@ -187,7 +240,7 @@ def make_keystroke_events(n: int = 20, rng: Optional[np.random.RandomState] = No
     return events
 
 
-def make_mouse_events(n: int = 30, rng: Optional[np.random.RandomState] = None) -> list:
+def make_mouse_events(n: int = 30, rng: Any = None) -> list:
     if rng is None:
         rng = np.random.RandomState(42)
     events = []
@@ -203,7 +256,7 @@ def make_mouse_events(n: int = 30, rng: Optional[np.random.RandomState] = None) 
     return events
 
 
-def make_session_events(n_events: int = 15, rng: Optional[np.random.RandomState] = None) -> list:
+def make_session_events(n_events: int = 15, rng: Any = None) -> list:
     if rng is None:
         rng = np.random.RandomState(42)
     events = []
@@ -294,7 +347,7 @@ def generate_jwt_token(user_id: int, role: str = "CUSTOMER", secret: str = None)
     now = datetime.now(timezone.utc)
     expire = now.timestamp() + 3600
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "role": role,
         "iat": now.timestamp(),
         "exp": expire,

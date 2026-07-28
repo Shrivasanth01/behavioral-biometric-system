@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { HandCoins, Calculator, Plus, TrendingUp, Calendar, CheckCircle } from 'lucide-react';
+import { Coins as HandCoins, Calculator, Plus, TrendingUp, Calendar, CheckCircle } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';

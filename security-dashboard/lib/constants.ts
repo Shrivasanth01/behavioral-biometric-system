@@ -39,10 +39,12 @@ export const ALERT_ICONS = {
 
 export const NAV_ITEMS = [
   { href: '/dashboard', label: 'Executive Overview', icon: 'LayoutDashboard' },
+  { href: '/console/alerts', label: 'SecOps Live Alerts', icon: 'Bell' },
+  { href: '/console/investigate/SEC-ALT-884', label: 'Forensic Workbench', icon: 'Search' },
   { href: '/dashboard/behavioral', label: 'Behavioral Analytics', icon: 'Activity' },
-  { href: '/dashboard/investigate', label: 'User Investigation', icon: 'Search' },
+  { href: '/dashboard/investigate', label: 'User Search & Lookup', icon: 'Search' },
   { href: '/dashboard/ml-monitoring', label: 'ML Monitoring', icon: 'BrainCircuit' },
-  { href: '/dashboard/alerts', label: 'Fraud Alerts', icon: 'Bell' },
+  { href: '/dashboard/alerts', label: 'Fraud Alerts (Legacy)', icon: 'Bell' },
   { href: '/dashboard/explain', label: 'Explainability', icon: 'Eye' },
   { href: '/dashboard/risk-trends', label: 'Risk Trends', icon: 'TrendingUp' },
   { href: '/dashboard/audit-logs', label: 'Audit Logs', icon: 'FileText' },

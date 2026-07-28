@@ -19,7 +19,7 @@ from app.models.account import Account
 from app.models.transaction import Transaction
 from app.exceptions import NotFoundException
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
 
 @router.get("/users", response_model=PaginatedUsers)

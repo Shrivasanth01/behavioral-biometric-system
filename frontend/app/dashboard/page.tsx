@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Wallet, ArrowUpDown, CreditCard, HandCoins, TrendingUp, TrendingDown,
+  Wallet, ArrowUpDown, CreditCard, Coins as HandCoins, TrendingUp, TrendingDown,
   PieChart, Eye, EyeOff,
 } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';

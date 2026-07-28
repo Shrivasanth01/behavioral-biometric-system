@@ -54,6 +54,10 @@ def retrain_user_model(self, user_id: int):
     async def _run():
         async with async_session_factory() as db:
             try:
+                from app.models.behavioral import BehavioralProfile, BehavioralEvent, MlModel, RiskScore
+                from sqlalchemy import desc, func
+                import time
+
                 result = await db.execute(
                     select(BehavioralProfile).where(BehavioralProfile.user_id == user_id)
                 )
@@ -61,39 +65,102 @@ def retrain_user_model(self, user_id: int):
                 if not profile:
                     return {"success": False, "error": "No profile found"}
 
-                model_version = f"1.0.{random.randint(1, 1000)}"
-                features_result = await db.execute(
-                    select(BehavioralProfile).where(BehavioralProfile.user_id == user_id)
+                # 1. Fetch recent sessions
+                session_result = await db.execute(
+                    select(BehavioralEvent.session_id)
+                    .where(BehavioralEvent.user_id == user_id)
+                    .group_by(BehavioralEvent.session_id)
+                    .order_by(desc(func.max(BehavioralEvent.server_timestamp)))
+                    .limit(100)
                 )
-                profile = features_result.scalar_one_or_none()
+                session_ids = [row[0] for row in session_result.fetchall()]
+                
+                if not session_ids:
+                    return {"success": False, "error": "No events found"}
+                    
+                events_result = await db.execute(
+                    select(BehavioralEvent)
+                    .where(BehavioralEvent.session_id.in_(session_ids))
+                    .order_by(BehavioralEvent.server_timestamp)
+                )
+                events = events_result.scalars().all()
+                
+                from collections import defaultdict
+                session_batches = defaultdict(list)
+                for e in events:
+                    evt_dict = {
+                        "session_id": e.session_id,
+                        "type": e.event_type,
+                        "timestamp": e.client_timestamp.timestamp() if e.client_timestamp else e.server_timestamp.timestamp(),
+                    }
+                    if e.event_data:
+                        evt_dict.update(e.event_data)
+                    session_batches[e.session_id].append(evt_dict)
+                    
+                event_batches = list(session_batches.values())
+                
+                risk_result = await db.execute(
+                    select(RiskScore.session_id, RiskScore.final_score)
+                    .where(RiskScore.session_id.in_(session_ids))
+                )
+                risk_map = {row[0]: row[1] for row in risk_result.fetchall()}
+                session_risk_scores = [risk_map.get(sid, 0.0) for sid in session_batches.keys()]
 
+                # Run ML training
+                import asyncio
+                import concurrent.futures
+                from ml.training_pipeline import TrainingPipeline
+                from ml.config import MLConfig
+                
+                start_time = time.time()
+                def _train():
+                    pipeline = TrainingPipeline(MLConfig())
+                    return pipeline.train_for_user(
+                        str(user_id), 
+                        event_batches, 
+                        session_risk_scores
+                    )
+                    
+                loop = asyncio.get_running_loop()
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    train_result = await loop.run_in_executor(pool, _train)
+                    
+                if not train_result.get("trained"):
+                    return {"success": False, "reason": train_result.get("reason", "unknown")}
+
+                model_version = str(train_result.get("version", "1"))
                 metrics = {
-                    "accuracy": round(random.uniform(0.80, 0.95), 4),
-                    "precision": round(random.uniform(0.78, 0.94), 4),
-                    "recall": round(random.uniform(0.75, 0.93), 4),
-                    "f1_score": round(random.uniform(0.76, 0.94), 4),
-                    "session_count": profile.session_count if profile else 0,
+                    "n_samples": train_result.get("n_samples", 0),
+                    "threshold": train_result.get("threshold", 0.0),
+                    "session_count": len(session_ids),
                 }
 
                 model = MlModel(
                     user_id=user_id,
-                    model_type="behavioral_ensemble",
+                    model_type=train_result.get("model_type", "isolation_forest"),
                     model_version=model_version,
-                    model_data=str(metrics).encode(),
+                    model_data=b"",
                     metrics=metrics,
                     is_active=True,
-                    session_count=profile.session_count if profile else 0,
-                    training_duration=round(random.uniform(0.5, 5.0), 2),
+                    session_count=len(session_ids),
+                    training_duration=round(time.time() - start_time, 2),
                 )
                 db.add(model)
 
                 if profile:
                     profile.model_version = model_version
                     profile.last_trained_at = datetime.now(timezone.utc)
+                    profile.session_count = len(session_ids)
+                    if "feature_statistics" in train_result:
+                        current_prof = profile.profile or {}
+                        current_prof["feature_statistics"] = train_result["feature_statistics"]
+                        profile.profile = current_prof
 
                 await db.flush()
                 return {"success": True, "user_id": user_id, "model_version": model_version}
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 raise self.retry(exc=e, countdown=120)
 
     loop = asyncio.new_event_loop()
@@ -109,31 +176,94 @@ def retrain_global_model(self):
     async def _run():
         async with async_session_factory() as db:
             try:
+                from app.models.behavioral import BehavioralEvent, BehavioralProfile, MlModel
+                from sqlalchemy import desc, func
+                import time
+                
                 result = await db.execute(
                     select(BehavioralProfile)
                 )
                 profiles = result.scalars().all()
-                session_count = sum(p.session_count or 0 for p in profiles)
+                if not profiles:
+                     return {"success": False, "error": "No users found"}
+                     
+                user_ids = [p.user_id for p in profiles]
+                
+                # Fetch recent events for all users (limit to max 500 sessions overall)
+                session_result = await db.execute(
+                    select(BehavioralEvent.session_id, BehavioralEvent.user_id)
+                    .group_by(BehavioralEvent.session_id, BehavioralEvent.user_id)
+                    .order_by(desc(func.max(BehavioralEvent.server_timestamp)))
+                    .limit(500)
+                )
+                session_rows = session_result.fetchall()
+                session_ids = [row[0] for row in session_rows]
+                
+                if not session_ids:
+                    return {"success": False, "error": "No events found"}
+                    
+                events_result = await db.execute(
+                    select(BehavioralEvent)
+                    .where(BehavioralEvent.session_id.in_(session_ids))
+                    .order_by(BehavioralEvent.server_timestamp)
+                )
+                events = events_result.scalars().all()
+                
+                from collections import defaultdict
+                all_user_batches = defaultdict(list)
+                session_evt_map = defaultdict(list)
+                
+                for e in events:
+                    evt_dict = {
+                        "session_id": e.session_id,
+                        "type": e.event_type,
+                        "timestamp": e.client_timestamp.timestamp() if e.client_timestamp else e.server_timestamp.timestamp(),
+                    }
+                    if e.event_data:
+                        evt_dict.update(e.event_data)
+                    session_evt_map[e.session_id].append(evt_dict)
+                    
+                # map back to users
+                user_session_map = {row[0]: row[1] for row in session_rows}
+                for sid, evts in session_evt_map.items():
+                    uid = user_session_map.get(sid)
+                    if uid:
+                        all_user_batches[str(uid)].append(evts)
+                
+                import asyncio
+                import concurrent.futures
+                from ml.training_pipeline import TrainingPipeline
+                from ml.config import MLConfig
+                
+                start_time = time.time()
+                def _train_global():
+                    pipeline = TrainingPipeline(MLConfig())
+                    return pipeline.retrain_global_model(all_user_batches)
+                    
+                loop = asyncio.get_running_loop()
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    train_result = await loop.run_in_executor(pool, _train_global)
+                    
+                if not train_result.get("trained"):
+                    return {"success": False, "reason": train_result.get("reason", "unknown")}
 
-                model_version = f"global.{datetime.now(timezone.utc).strftime('%Y%m%d.%H%M%S')}"
+                model_version = str(train_result.get("version", "1"))
                 metrics = {
-                    "accuracy": round(random.uniform(0.85, 0.97), 4),
-                    "precision": round(random.uniform(0.83, 0.96), 4),
-                    "recall": round(random.uniform(0.82, 0.95), 4),
-                    "f1_score": round(random.uniform(0.84, 0.96), 4),
-                    "user_count": len(profiles),
-                    "session_count": session_count,
+                    "n_samples": train_result.get("n_samples", 0),
+                    "threshold": train_result.get("threshold", 0.0),
+                    "user_count": len(all_user_batches),
+                    "session_count": len(session_ids),
                 }
 
                 model = MlModel(
                     user_id=None,
-                    model_type="global_behavioral_ensemble",
+                    model_type=train_result.get("model_type", "global_behavioral_ensemble"),
                     model_version=model_version,
-                    model_data=str(metrics).encode(),
+                    model_data=b"",
                     metrics=metrics,
                     is_active=True,
-                    session_count=session_count,
-                    training_duration=round(random.uniform(10, 60), 2),
+                    session_count=len(session_ids),
+                    training_duration=round(time.time() - start_time, 2),
                 )
                 db.add(model)
 
@@ -145,8 +275,10 @@ def retrain_global_model(self):
                     )
                 )
                 await db.flush()
-                return {"success": True, "model_version": model_version, "users": len(profiles)}
+                return {"success": True, "model_version": model_version, "users": len(all_user_batches)}
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 raise self.retry(exc=e, countdown=300)
 
     loop = asyncio.new_event_loop()
@@ -162,20 +294,40 @@ def detect_drift(self):
     async def _run():
         async with async_session_factory() as db:
             try:
-                result = await db.execute(
-                    select(BehavioralProfile)
-                )
+                from app.models.behavioral import BehavioralProfile, BehavioralFeature
+                from sqlalchemy import desc
+                from ml.drift_detection import DriftDetector
+                from ml.config import MLConfig
+                import json
+                
+                result = await db.execute(select(BehavioralProfile))
                 profiles = result.scalars().all()
-
+                
+                detector = DriftDetector(MLConfig())
                 drifted_count = 0
+                
                 for profile in profiles:
                     if profile.session_count and profile.session_count > 5:
-                        should_drift = random.random() < 0.05
-                        if should_drift:
-                            profile.drift_status = "drifted"
-                            drifted_count += 1
-                        elif profile.drift_status == "drifted":
-                            profile.drift_status = "normal"
+                        feat_result = await db.execute(
+                            select(BehavioralFeature.features)
+                            .where(BehavioralFeature.user_id == profile.user_id)
+                            .order_by(desc(BehavioralFeature.created_at))
+                            .limit(1)
+                        )
+                        latest_feature = feat_result.scalar_one_or_none()
+                        
+                        if latest_feature and profile.profile and "feature_statistics" in profile.profile:
+                            baseline_stats = profile.profile["feature_statistics"]
+                            report = detector.get_user_drift_status(
+                                str(profile.user_id), 
+                                latest_feature, 
+                                baseline_stats
+                            )
+                            if report.has_drifted:
+                                profile.drift_status = "drifted"
+                                drifted_count += 1
+                            else:
+                                profile.drift_status = "normal"
 
                 await db.flush()
                 return {
@@ -184,6 +336,8 @@ def detect_drift(self):
                     "drifted_count": drifted_count,
                 }
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 return {"success": False, "error": str(e)}
 
     loop = asyncio.new_event_loop()

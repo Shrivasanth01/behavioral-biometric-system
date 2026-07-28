@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { HandCoins, Calendar, TrendingUp } from 'lucide-react';
+import { Coins as HandCoins, Calendar, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/Badge';
 import { Progress } from '@/components/ui/Progress';

@@ -34,10 +34,11 @@ async def get_current_user(
             options={"verify_aud": False},
             issuer=settings.JWT_ISSUER,
         )
-        user_id: int = payload.get("sub")
-        if user_id is None:
+        sub = payload.get("sub")
+        if sub is None:
             raise UnauthorizedException("Invalid token payload")
-    except JWTError as e:
+        user_id = int(sub)
+    except (JWTError, ValueError, TypeError) as e:
         raise UnauthorizedException(f"Invalid or expired token: {str(e)}")
 
     result = await db.execute(select(User).where(User.id == user_id))
@@ -80,7 +81,7 @@ def create_access_token(user_id: int, role: str) -> str:
     now = datetime.now(timezone.utc)
     expire = now.timestamp() + settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "role": role,
         "iat": now.timestamp(),
         "exp": expire,
@@ -94,7 +95,7 @@ def create_refresh_token(user_id: int) -> str:
     now = datetime.now(timezone.utc)
     expire = now.timestamp() + settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "iat": now.timestamp(),
         "exp": expire,
         "iss": settings.JWT_ISSUER,
@@ -113,7 +114,7 @@ def decode_refresh_token(token: str) -> int:
         )
         if payload.get("type") != "refresh":
             raise UnauthorizedException("Invalid token type")
-        return payload.get("sub")
+        return int(payload.get("sub"))
     except JWTError:
         raise UnauthorizedException("Invalid refresh token")
 
@@ -122,7 +123,7 @@ def create_temp_token(user_id: int, mfa_method: str) -> str:
     now = datetime.now(timezone.utc)
     expire = now.timestamp() + 300
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "mfa_method": mfa_method,
         "iat": now.timestamp(),
         "exp": expire,
@@ -142,6 +143,6 @@ def decode_temp_token(token: str) -> tuple[int, str]:
         )
         if payload.get("type") != "mfa_temp":
             raise UnauthorizedException("Invalid temp token")
-        return payload.get("sub"), payload.get("mfa_method")
+        return int(payload.get("sub")), payload.get("mfa_method")
     except JWTError:
         raise UnauthorizedException("Invalid or expired temp token")

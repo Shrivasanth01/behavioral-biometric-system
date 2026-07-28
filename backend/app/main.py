@@ -14,16 +14,25 @@ from app.api.banking import router as banking_router
 from app.api.behavioral import router as behavioral_router
 from app.api.risk import router as risk_router
 from app.api.admin import router as admin_router
+from app.api.v1_router import mlops_router, audit_router, notifications_router, dashboards_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     try:
-        from app.tasks import detect_drift
-        detect_drift.delay()
-    except Exception:
-        pass
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        result = s.connect_ex(('localhost', 6379))
+        s.close()
+        if result == 0:
+            from app.tasks import detect_drift
+            detect_drift.delay()
+        else:
+            print("INFO: Redis not detected on port 6379; running in standalone DB mode without Celery beat queue.")
+    except Exception as e:
+        print(f"INFO: Skipped Celery startup queue check: {e}")
     yield
     await close_db()
 
@@ -44,18 +53,12 @@ async def _log_requests(request: Request, call_next):
         headers = dict(request.headers)
     except Exception:
         headers = {}
-    line = f"[DEBUG_REQ] {request.method} {request.url.path} HEADERS: {list(headers.keys())}"
-    print(line)
-    try:
-        with open(r"c:\\Users\\shriv\\Documents\\behavioral-biometric-system\\backend\\request_debug.log", "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
+    print(f"[DEBUG_REQ] {request.method} {request.url.path} HEADERS: {list(headers.keys())}")
     return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
@@ -70,11 +73,14 @@ if settings.ENVIRONMENT != "production":
     @app.middleware("http")
     async def _ensure_cors_headers(request: Request, call_next):
         response = await call_next(request)
-        try:
-            origin = settings.CORS_ORIGINS[0] if settings.CORS_ORIGINS else "*"
-        except Exception:
-            origin = "*"
-        response.headers.setdefault("Access-Control-Allow-Origin", origin)
+        origin = request.headers.get("origin")
+        if origin and origin in settings.CORS_ORIGINS:
+            response.headers.setdefault("Access-Control-Allow-Origin", origin)
+        elif settings.CORS_ORIGINS:
+            response.headers.setdefault("Access-Control-Allow-Origin", settings.CORS_ORIGINS[0])
+        else:
+            response.headers.setdefault("Access-Control-Allow-Origin", "*")
+            
         response.headers.setdefault("Access-Control-Allow-Credentials", "true")
         response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
         response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -92,6 +98,12 @@ app.include_router(banking_router)
 app.include_router(behavioral_router)
 app.include_router(risk_router)
 app.include_router(admin_router)
+
+# V1 Domain Microservices
+app.include_router(mlops_router)
+app.include_router(audit_router)
+app.include_router(notifications_router)
+app.include_router(dashboards_router)
 
 
 @app.get("/health")

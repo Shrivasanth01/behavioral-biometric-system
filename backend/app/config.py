@@ -1,6 +1,10 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 import secrets
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+DB_PATH = BASE_DIR / "database" / "behavioral_system.db"
 
 
 class Settings(BaseSettings):
@@ -8,8 +12,8 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     ENVIRONMENT: str = "development"
 
-    DATABASE_URL: str = "sqlite+aiosqlite:///./database/behavioral_system.db"
-    DATABASE_SYNC_URL: str = "sqlite:///./database/behavioral_system.db"
+    DATABASE_URL: str = f"sqlite+aiosqlite:///{DB_PATH.as_posix()}"
+    DATABASE_SYNC_URL: str = f"sqlite:///{DB_PATH.as_posix()}"
 
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"

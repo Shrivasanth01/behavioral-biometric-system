@@ -5,6 +5,7 @@ import { ArrowRightLeft, Building2, Globe, Smartphone, Shield, CheckCircle } fro
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Tabs } from '@/components/ui/Tabs';
 import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
 import { InternalTransfer } from '@/components/transfer/InternalTransfer';
 import { ExternalTransfer } from '@/components/transfer/ExternalTransfer';
 import { UpiTransfer } from '@/components/transfer/UpiTransfer';

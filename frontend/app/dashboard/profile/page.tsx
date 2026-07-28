@@ -14,7 +14,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Progress } from '@/components/ui/Progress';
 import { PasswordStrength } from '@/components/auth/PasswordStrength';
 import { generateMockUser, formatDateTime, timeAgo, getInitials } from '@/lib/utils';
-import type { User, NotificationPreferences } from '@/types';
+import type { User as UserType, NotificationPreferences } from '@/types';
 
 const mockUser = generateMockUser();
 

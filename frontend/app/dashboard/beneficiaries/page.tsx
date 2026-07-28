@@ -19,7 +19,7 @@ export default function BeneficiariesPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState<Beneficiary | null>(null);
   const [formData, setFormData] = useState({
     name: '', accountNumber: '', ifscCode: '', bankName: '',
-    accountType: 'savings' as const, nickname: '', phone: '', email: '',
+    accountType: 'savings' as 'savings' | 'current', nickname: '', phone: '', email: '',
     isUPI: false, upiId: '', maxTransferLimit: 50000,
   });
 
