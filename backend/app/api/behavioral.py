@@ -16,7 +16,7 @@ from app.middleware.auth import get_current_user, optional_current_user
 from app.models.user import User
 from app.utils import get_client_ip, get_user_agent
 
-router = APIRouter(prefix="/events", tags=["Behavioral"])
+router = APIRouter(prefix="/api/behavioral", tags=["Behavioral"])
 
 
 @router.post("", response_model=IngestEventResponse)
@@ -40,6 +40,7 @@ async def ingest_event(
 
 
 @router.post("/batch")
+@router.post("/events")
 async def ingest_event_batch(
     request: Request,
     batch: BehavioralEventBatch,

@@ -14,7 +14,7 @@ from app.api.banking import router as banking_router
 from app.api.behavioral import router as behavioral_router
 from app.api.risk import router as risk_router
 from app.api.admin import router as admin_router
-from app.api.v1_router import mlops_router, audit_router, notifications_router, dashboards_router
+from app.api.v1_router import mlops_router, audit_router, notifications_router, dashboards_router, telemetry_router
 
 
 @asynccontextmanager
@@ -104,6 +104,7 @@ app.include_router(mlops_router)
 app.include_router(audit_router)
 app.include_router(notifications_router)
 app.include_router(dashboards_router)
+app.include_router(telemetry_router)
 
 
 @app.get("/health")
