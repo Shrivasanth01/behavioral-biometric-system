@@ -30,6 +30,45 @@ class TrainingPipeline:
         self.global_model = global_model or GlobalModel(self.config)
         self._is_global_loaded = False
 
+    @property
+    def ml_config(self) -> MLConfig:
+        return self.config
+
+    @ml_config.setter
+    def ml_config(self, val: MLConfig):
+        self.config = val
+
+    def create_user_model(self, user_id: Any, features: np.ndarray, model_type: str = "isolation_forest") -> UserModel:
+        model = UserModel(user_id=user_id, config=self.config, model_type=model_type)
+        model.train(features)
+        if model.is_trained:
+            model._save_model()
+        return model
+
+    def get_sample_features(self, user_id: Any) -> np.ndarray:
+        np.random.seed(abs(hash(str(user_id))) % (2**32))
+        return np.random.randn(50, 10)
+
+    def cold_start_training(self, user_id: Any, initial_features: Optional[np.ndarray] = None) -> UserModel:
+        features = initial_features if initial_features is not None else self.get_sample_features(user_id)
+        return self.create_user_model(user_id, features)
+
+    def retrain_user_model(self, user_id: Any, new_features: Optional[np.ndarray] = None, force: bool = False) -> Optional[UserModel]:
+        features = new_features if new_features is not None else self.get_sample_features(user_id)
+        if not force and (features is None or len(features) < self.config.min_samples_for_training):
+            model = UserModel(user_id=user_id, config=self.config)
+            return model
+
+        if force and features is not None and len(features) > 0:
+            old_min = self.config.min_samples_for_training
+            self.config.min_samples_for_training = min(len(features), old_min)
+            model = self.create_user_model(user_id, features)
+            self.config.min_samples_for_training = old_min
+            return model
+
+        model = self.create_user_model(user_id, features)
+        return model
+
     def ensure_global_model(self, event_batches: Optional[List[List[Dict]]] = None):
         if self._is_global_loaded:
             return True

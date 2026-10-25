@@ -356,10 +356,12 @@ class RiskService:
         )
         rows = result.fetchall()
 
-        distribution = {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0, "total": 0}
+        distribution = {"low": 0, "medium": 0, "high": 0, "critical": 0, "total": 0, "LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}
         for row in rows:
-            band = row[0] if row[0] in distribution else "LOW"
-            distribution[band] = row[1]
+            band_key = str(row[0]).lower() if row[0] else "low"
+            if band_key in distribution:
+                distribution[band_key] = row[1]
+                distribution[band_key.upper()] = row[1]
             distribution["total"] += row[1]
 
         return distribution

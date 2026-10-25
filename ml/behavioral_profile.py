@@ -35,7 +35,33 @@ class BehavioralProfile:
         self.drift_status = drift_status
         self.cold_start = cold_start
 
+    def __getitem__(self, item: str) -> Any:
+        return self.get(item)
+
+    def get(self, item: str, default: Any = None) -> Any:
+        data = self.to_dict()
+        if item == "feature_stats" or item == "feature_means":
+            return self.feature_statistics
+        if item == "data_points":
+            return self.session_count
+        if item in data:
+            return data[item]
+        return getattr(self, item, default)
+
+    def __contains__(self, item: str) -> bool:
+        return item in self.to_dict() or hasattr(self, item)
+
     def to_dict(self) -> Dict[str, Any]:
+        formatted_history = []
+        for item in self.risk_history[-100:]:
+            if isinstance(item, dict):
+                formatted_history.append(item)
+            elif isinstance(item, (tuple, list)):
+                ts = item[0].isoformat() if hasattr(item[0], "isoformat") else str(item[0])
+                score = item[1] if len(item) > 1 else 0
+                band = item[2] if len(item) > 2 else "LOW"
+                formatted_history.append({"timestamp": ts, "score": score, "band": band})
+
         return {
             "user_id": self.user_id,
             "profile_version": self.profile_version,
@@ -43,11 +69,9 @@ class BehavioralProfile:
             "session_count": self.session_count,
             "last_trained_at": self.last_trained_at.isoformat() if self.last_trained_at else None,
             "feature_statistics": self.feature_statistics,
+            "feature_stats": self.feature_statistics,
             "device_fingerprints": self.device_fingerprints,
-            "risk_history": [
-                {"timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts), "score": s, "band": b}
-                for ts, s, b in self.risk_history[-100:]
-            ],
+            "risk_history": formatted_history,
             "drift_status": self.drift_status,
             "cold_start": self.cold_start,
         }
@@ -121,21 +145,95 @@ class BehavioralProfileManager:
             os.remove(profile_path)
         self._evict_cache(user_id)
 
-    def add_risk_event(self, user_id: str, score: float, band: str):
-        profile = self.get_or_create_profile(user_id)
-        profile.risk_history.append((datetime.utcnow(), score, band))
+    def add_risk_event(self, user_id: str, score: float, band: str, reason: str = ""):
+        profile = self.get_or_create_profile(str(user_id))
+        event_dict = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "score": float(score),
+            "band": band,
+            "reason": reason,
+        }
+        profile.risk_history.append(event_dict)
         if len(profile.risk_history) > 1000:
             profile.risk_history = profile.risk_history[-500:]
         self.save_profile(profile)
 
+    def record_risk_score(self, user_id: Any, score: float, reason: str = "", band: Optional[str] = None):
+        uid = str(user_id)
+        if band is None:
+            if score >= 80:
+                band = "CRITICAL"
+            elif score >= 60:
+                band = "HIGH"
+            elif score >= 30:
+                band = "MEDIUM"
+            else:
+                band = "LOW"
+        self.add_risk_event(uid, float(score), band, reason=reason)
+
+    def get_risk_history(self, user_id: Any) -> List[Any]:
+        profile = self.get_profile(str(user_id))
+        if profile:
+            return profile.risk_history
+        return []
+
+    def update_profile(self, user_id: Any, features: Dict[str, Any]) -> BehavioralProfile:
+        uid = str(user_id)
+        profile = self.get_or_create_profile(uid)
+        profile.session_count += 1
+        profile.cold_start = False
+
+        if not profile.feature_statistics:
+            profile.feature_statistics = {}
+
+        for key, val in features.items():
+            if not isinstance(val, (int, float)):
+                continue
+            if key not in profile.feature_statistics:
+                profile.feature_statistics[key] = {"mean": float(val), "std": 0.0, "min": float(val), "max": float(val), "count": 1, "values": [float(val)]}
+            else:
+                stats = profile.feature_statistics[key]
+                vals = stats.get("values", [stats.get("mean", float(val))])
+                vals.append(float(val))
+                stats["values"] = vals
+                stats["count"] = len(vals)
+                stats["mean"] = sum(vals) / len(vals)
+                stats["min"] = min(vals)
+                stats["max"] = max(vals)
+                mean = stats["mean"]
+                stats["std"] = (sum((x - mean) ** 2 for x in vals) / len(vals)) ** 0.5
+
+        self.save_profile(profile)
+        return profile
+
+    def get_profile_statistics(self, user_id: Any) -> Dict[str, Dict[str, float]]:
+        profile = self.get_profile(str(user_id))
+        if profile:
+            return profile.feature_statistics
+        return {}
+
+    def register_device(self, user_id: Any, device_info: Any) -> str:
+        import hashlib
+        uid = str(user_id)
+        if isinstance(device_info, dict):
+            info_str = json.dumps(device_info, sort_keys=True)
+        else:
+            info_str = str(device_info)
+        fingerprint = hashlib.sha256(info_str.encode("utf-8")).hexdigest()[:16]
+        self.add_device_fingerprint(uid, fingerprint)
+        return fingerprint
+
+    def get_user_devices(self, user_id: Any) -> List[str]:
+        return self.get_trusted_devices(str(user_id))
+
     def add_device_fingerprint(self, user_id: str, fingerprint: str):
-        profile = self.get_or_create_profile(user_id)
+        profile = self.get_or_create_profile(str(user_id))
         if fingerprint not in profile.device_fingerprints:
             profile.device_fingerprints.append(fingerprint)
             self.save_profile(profile)
 
     def get_trusted_devices(self, user_id: str) -> List[str]:
-        profile = self.get_profile(user_id)
+        profile = self.get_profile(str(user_id))
         if profile:
             return profile.device_fingerprints
         return []

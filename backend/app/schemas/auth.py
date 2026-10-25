@@ -41,7 +41,8 @@ class LoginResponse(BaseModel):
 
 
 class TokenRefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Optional[str] = None
+    refreshToken: Optional[str] = None
 
 
 class TokenRefreshResponse(BaseModel):

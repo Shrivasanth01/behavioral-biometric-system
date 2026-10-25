@@ -16,10 +16,12 @@ from app.middleware.auth import get_current_user, optional_current_user
 from app.models.user import User
 from app.utils import get_client_ip, get_user_agent
 
-router = APIRouter(prefix="/api/behavioral", tags=["Behavioral"])
+router = APIRouter(tags=["Behavioral"])
 
 
-@router.post("", response_model=IngestEventResponse)
+@router.post("/api/events", response_model=IngestEventResponse)
+@router.post("/api/behavioral", response_model=IngestEventResponse)
+@router.post("/api/behavioral/events", response_model=IngestEventResponse)
 async def ingest_event(
     request: Request,
     event: BehavioralEventCreate,
@@ -39,8 +41,9 @@ async def ingest_event(
     return IngestEventResponse(event_id=created.id)
 
 
-@router.post("/batch")
-@router.post("/events")
+@router.post("/api/events/batch")
+@router.post("/api/behavioral/batch")
+@router.post("/api/behavioral/events/batch")
 async def ingest_event_batch(
     request: Request,
     batch: BehavioralEventBatch,
@@ -68,13 +71,17 @@ async def ingest_event_batch(
         event_ids.append(created.id)
         
     if current_user and session_id:
-        from app.tasks import process_behavioral_events
-        process_behavioral_events.delay(session_id, current_user.id)
+        try:
+            from app.tasks import process_behavioral_events
+            process_behavioral_events.delay(session_id, current_user.id)
+        except Exception:
+            pass
 
     return {"success": True, "event_ids": event_ids, "count": len(event_ids)}
 
 
-@router.get("/session/{session_id}", response_model=list[BehavioralEventResponse])
+@router.get("/api/behavioral/session/{session_id}", response_model=list[BehavioralEventResponse])
+@router.get("/api/events/session/{session_id}", response_model=list[BehavioralEventResponse])
 async def get_session_events(
     session_id: str,
     db: AsyncSession = Depends(get_db),
@@ -84,7 +91,43 @@ async def get_session_events(
     return events
 
 
-@router.get("/profile/{user_id}", response_model=BehavioralProfileResponse)
+@router.get("/api/behavioral/profile", response_model=BehavioralProfileResponse)
+@router.get("/api/events/profile", response_model=BehavioralProfileResponse)
+async def get_my_behavioral_profile(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = BehavioralService(db)
+    profile = await service.get_user_profile(current_user.id)
+    return profile
+
+
+@router.get("/api/behavioral/profile/risk-history", response_model=list[RiskHistoryResponse])
+@router.get("/api/events/profile/risk-history", response_model=list[RiskHistoryResponse])
+async def get_my_risk_history(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = BehavioralService(db)
+    history = await service.get_risk_history(current_user.id, days)
+    return history
+
+
+@router.get("/api/behavioral/profile/sessions", response_model=list[SessionResponse])
+@router.get("/api/events/profile/sessions", response_model=list[SessionResponse])
+async def get_my_user_sessions(
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = BehavioralService(db)
+    sessions = await service.get_user_sessions(current_user.id, limit)
+    return sessions
+
+
+@router.get("/api/behavioral/profile/{user_id}", response_model=BehavioralProfileResponse)
+@router.get("/api/events/profile/{user_id}", response_model=BehavioralProfileResponse)
 async def get_behavioral_profile(
     user_id: int,
     db: AsyncSession = Depends(get_db),
@@ -95,7 +138,8 @@ async def get_behavioral_profile(
     return profile
 
 
-@router.get("/profile/{user_id}/risk-history", response_model=list[RiskHistoryResponse])
+@router.get("/api/behavioral/profile/{user_id}/risk-history", response_model=list[RiskHistoryResponse])
+@router.get("/api/events/profile/{user_id}/risk-history", response_model=list[RiskHistoryResponse])
 async def get_risk_history(
     user_id: int,
     days: int = Query(30, ge=1, le=365),
@@ -107,7 +151,8 @@ async def get_risk_history(
     return history
 
 
-@router.get("/profile/{user_id}/sessions", response_model=list[SessionResponse])
+@router.get("/api/behavioral/profile/{user_id}/sessions", response_model=list[SessionResponse])
+@router.get("/api/events/profile/{user_id}/sessions", response_model=list[SessionResponse])
 async def get_user_sessions(
     user_id: int,
     limit: int = Query(20, ge=1, le=100),

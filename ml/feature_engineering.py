@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from scipy.stats import entropy
 from ml.config import MLConfig, FeatureConfig
 from ml.utils import (
@@ -17,12 +17,26 @@ class FeatureEngine:
         self.config = config or MLConfig()
         self.feature_config = self.config.feature
 
+    def _preprocess(self, events: Any) -> pd.DataFrame:
+        if not events:
+            return pd.DataFrame()
+        df = preprocess_events(events)
+        if df.empty:
+            return df
+        if "type" not in df.columns:
+            df["type"] = ""
+        df = df.replace([np.inf, -np.inf, np.nan], 0.0)
+        df["type"] = df["type"].fillna("")
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce").fillna(0.0)
+        return df
+
     def extract_all(
         self,
         events: List[Dict],
         include_mobile: bool = False,
     ) -> Dict[str, float]:
-        df = preprocess_events(events)
+        df = self._preprocess(events)
         if df.empty:
             return self._empty_features(include_mobile)
 
@@ -36,7 +50,14 @@ class FeatureEngine:
         for k in self.feature_config.all_features:
             features.setdefault(k, 0.0)
 
-        return features
+        cleaned = {}
+        for k, v in features.items():
+            if v is None or not isinstance(v, (int, float, np.number)) or not np.isfinite(v):
+                cleaned[k] = 0.0
+            else:
+                cleaned[k] = float(v)
+
+        return cleaned
 
     def extract_batch(
         self,
@@ -56,7 +77,9 @@ class FeatureEngine:
         feats.update({k: 0.0 for k in self.feature_config.mobile_features})
         return feats
 
-    def _extract_keystroke_features(self, df: pd.DataFrame) -> Dict[str, float]:
+    def _extract_keystroke_features(self, df: Optional[pd.DataFrame]) -> Dict[str, float]:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or "type" not in df.columns:
+            return {k: 0.0 for k in self.feature_config.keystroke_features}
         features = {}
         key_events = df[df["type"] == "keydown"].copy()
         keyup_events = df[df["type"] == "keyup"].copy()
@@ -123,7 +146,9 @@ class FeatureEngine:
             latencies.append(timestamps[i + 3] - timestamps[i])
         return np.array(latencies, dtype=np.float64)
 
-    def _extract_mouse_features(self, df: pd.DataFrame) -> Dict[str, float]:
+    def _extract_mouse_features(self, df: Optional[pd.DataFrame]) -> Dict[str, float]:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or "type" not in df.columns:
+            return {k: 0.0 for k in self.feature_config.mouse_features}
         features = {}
         mouse_moves = df[df["type"] == "mousemove"].copy()
         mouse_clicks = df[df["type"].isin(["mousedown", "mouseup", "click"])].copy()
@@ -203,7 +228,9 @@ class FeatureEngine:
 
         return features
 
-    def _extract_session_features(self, df: pd.DataFrame) -> Dict[str, float]:
+    def _extract_session_features(self, df: Optional[pd.DataFrame]) -> Dict[str, float]:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or "timestamp" not in df.columns or "type" not in df.columns:
+            return {k: 0.0 for k in self.feature_config.session_features}
         features = {}
         ts = df["timestamp"].values.astype(np.float64)
         if len(ts) < 2:
@@ -251,7 +278,9 @@ class FeatureEngine:
 
         return features
 
-    def _extract_mobile_features(self, df: pd.DataFrame) -> Dict[str, float]:
+    def _extract_mobile_features(self, df: Optional[pd.DataFrame]) -> Dict[str, float]:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or "type" not in df.columns:
+            return {k: 0.0 for k in self.feature_config.mobile_features}
         features = {}
 
         touch_events = df[df["type"].isin(["touchstart", "touchmove", "touchend"])].copy()

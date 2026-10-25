@@ -1,25 +1,23 @@
-from fastapi import APIRouter, Depends, Request, Query
+from fastapi import APIRouter, Depends, Request, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
 from app.database import get_db
 from app.schemas.risk import (
     RiskAssessmentRequest, RiskAssessmentResponse,
-    RiskScoreResponse,
-    ExplainabilityResponse,
-    FraudAlertResponse, PaginatedFraudAlerts,
-    FraudAlertStatusUpdate,
-    DashboardSummaryResponse,
-    RiskTrendsResponse, RiskTrendPoint,
-    RiskDistributionResponse,
+    RiskScoreResponse, ExplainabilityResponse,
+    FraudAlertResponse, FraudAlertStatusUpdate, PaginatedFraudAlerts,
+    DashboardSummaryResponse, RiskTrendsResponse, RiskDistributionResponse,
+    RiskTrendPoint,
 )
 from app.services.risk_service import RiskService
-from app.middleware.auth import get_current_user, require_analyst
+from app.middleware.auth import get_current_user
 from app.middleware.audit import audit_logger
 from app.models.user import User
 from app.models.behavioral import AlertStatus, SeverityLevel
+from app.utils import get_client_ip, get_user_agent
 
-router = APIRouter(prefix="/api/risk", tags=["Risk Engine"])
+router = APIRouter(prefix="/api/risk", tags=["Risk Assessment"])
 
 
 @router.post("/assess", response_model=RiskAssessmentResponse)
@@ -29,9 +27,10 @@ async def assess_risk(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    user_id = req.user_id or current_user.id
     service = RiskService(db)
     result = await service.assess_risk(
-        user_id=req.user_id,
+        user_id=user_id,
         session_id=req.session_id,
         transaction_id=req.transaction_id,
         transaction_amount=req.transaction_amount,
@@ -54,6 +53,8 @@ async def get_risk_score(
 ):
     service = RiskService(db)
     score = await service.get_risk_score(session_id)
+    if not score:
+        raise HTTPException(status_code=404, detail="Risk score not found")
     return score
 
 
@@ -65,6 +66,8 @@ async def explain_risk(
 ):
     service = RiskService(db)
     explanation = await service.get_explainability(session_id)
+    if not explanation:
+        raise HTTPException(status_code=404, detail="Explainability not found")
     return explanation
 
 
@@ -95,7 +98,10 @@ async def get_alert(
     current_user: User = Depends(get_current_user),
 ):
     service = RiskService(db)
-    return await service.get_alert(alert_id)
+    alert = await service.get_alert(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
 
 
 @router.put("/alerts/{alert_id}/status", response_model=FraudAlertResponse)
@@ -146,4 +152,14 @@ async def dashboard_distribution(
 ):
     service = RiskService(db)
     distribution = await service.get_risk_distribution()
-    return RiskDistributionResponse(**distribution)
+    return RiskDistributionResponse(
+        low=distribution.get("low", distribution.get("LOW", 0)),
+        medium=distribution.get("medium", distribution.get("MEDIUM", 0)),
+        high=distribution.get("high", distribution.get("HIGH", 0)),
+        critical=distribution.get("critical", distribution.get("CRITICAL", 0)),
+        total=distribution.get("total", 0),
+        LOW=distribution.get("LOW", distribution.get("low", 0)),
+        MEDIUM=distribution.get("MEDIUM", distribution.get("medium", 0)),
+        HIGH=distribution.get("HIGH", distribution.get("high", 0)),
+        CRITICAL=distribution.get("CRITICAL", distribution.get("critical", 0)),
+    )

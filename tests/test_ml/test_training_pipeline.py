@@ -109,7 +109,7 @@ class TestTrainingEdgeCases:
 
     def test_sparse_features(self, pipeline):
         sparse = np.zeros((200, 50))
-        sparse[np.arange(0, 200, 2), np.arange(0, 50, 1)[:100]] = 1
+        sparse[np.arange(0, 200, 4), np.arange(0, 50, 1)] = 1
         model = pipeline.create_user_model(user_id=402, features=sparse)
         assert model.is_trained
 

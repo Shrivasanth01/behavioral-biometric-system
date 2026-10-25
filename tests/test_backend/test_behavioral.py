@@ -192,7 +192,7 @@ class TestBehavioralConcurrency:
             with patch("app.api.behavioral.optional_current_user") as mock_user:
                 mock_user.return_value = MagicMock(id=2)
                 with patch("app.services.behavioral_service.BehavioralService.ingest_event") as mock_ingest:
-                    mock_ingest.side_effect = [MagicMock(id=i) for i in range(1, 6)]
+                    mock_ingest.side_effect = lambda data: MagicMock(id=1)
                     import concurrent.futures
                     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                         futures = []

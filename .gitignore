@@ -62,4 +62,13 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
-*.tsbuildinfo
+*.tsbuildinfo
+
+# =========================
+# Runtime Artifacts & Stores
+# =========================
+model_store/*
+!model_store/.gitkeep
+profile_store/*
+!profile_store/.gitkeep
+

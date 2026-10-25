@@ -15,21 +15,31 @@ from ml.config import MLConfig, ModelHyperparameters, TrainingThresholds
 logger = logging.getLogger(__name__)
 
 
+from pathlib import Path
+
+
 class UserModel:
+    _model_store = Path(MLConfig().model_storage_path)
+    _model_cache: Dict[Tuple[Any, Any, str], "UserModel"] = {}
+
     def __init__(
         self,
-        user_id: str,
+        user_id: Any,
         config: Optional[MLConfig] = None,
+        model_version: int = 1,
+        model_type: str = "isolation_forest",
     ):
         self.user_id = user_id
         self.config = config or MLConfig()
-        self.model_type = "isolation_forest"
+        self.version = model_version
+        self.model_version = model_version
+        self.model_type = model_type
         self.model: Optional[IsolationForest] = None
         self.autoencoder: Optional[Any] = None
         self.one_class_svm: Optional[OneClassSVM] = None
         self.scaler: StandardScaler = StandardScaler()
         self.threshold: float = 0.0
-        self.version: int = 0
+        self.anomaly_threshold: float = 0.05
         self.trained_at: Optional[datetime] = None
         self.training_history: List[Dict] = []
         self.feature_means: Optional[np.ndarray] = None
@@ -37,33 +47,63 @@ class UserModel:
         self.n_samples: int = 0
 
     @property
+    def is_trained(self) -> bool:
+        return self.model is not None or self.one_class_svm is not None or self.autoencoder is not None
+
+    @property
+    def _model(self) -> Optional[Any]:
+        return self.model or self.one_class_svm or self.autoencoder
+
+    @_model.setter
+    def _model(self, value: Any):
+        if self.model_type == "one_class_svm":
+            self.one_class_svm = value
+        elif self.model_type == "autoencoder":
+            self.autoencoder = value
+        else:
+            self.model = value
+
+    @property
+    def _model_path(self) -> Path:
+        return self._get_model_path(self.user_id, self.version, self.model_type, self.config)
+
+    @property
     def model_path(self) -> str:
-        return os.path.join(
-            self.config.model_storage_path,
-            self.user_id,
-            f"model_v{self.version}.pkl",
-        )
+        return str(self._model_path)
 
     @property
     def metadata_path(self) -> str:
-        return os.path.join(
-            self.config.model_storage_path,
-            self.user_id,
-            f"model_v{self.version}_meta.json",
-        )
+        p = self._model_path
+        return str(p.parent / f"model_v{self.version}_meta.json")
+
+    @classmethod
+    def _get_model_path(
+        cls,
+        user_id: Any,
+        version: int = 1,
+        model_type: str = "isolation_forest",
+        config: Optional[MLConfig] = None,
+    ) -> Path:
+        store = Path(config.model_storage_path) if config else Path(cls._model_store)
+        return store / f"model_v{version}.pkl"
 
     def train(
         self,
         features: np.ndarray,
-        model_type: str = "isolation_forest",
+        model_type: Optional[str] = None,
         use_autoencoder: bool = False,
         use_svm: bool = False,
     ) -> Dict[str, Any]:
         features = np.asarray(features, dtype=np.float64)
         if features.ndim == 1:
             features = features.reshape(1, -1)
-        if features.shape[0] < 3:
-            raise ValueError(f"Need at least 3 samples, got {features.shape[0]}")
+
+        mtype = model_type or self.model_type
+
+        min_samples = self.config.min_samples_for_training
+        if features.shape[0] < min_samples:
+            logger.warning(f"Insufficient samples for training: {features.shape[0]} < {min_samples}")
+            return {}
 
         self.scaler.fit(features)
         scaled = self.scaler.transform(features)
@@ -74,7 +114,25 @@ class UserModel:
         hp = self.config.model
         results = {}
 
-        if model_type == "isolation_forest" or not use_svm:
+        if mtype == "autoencoder":
+            self._train_autoencoder(scaled)
+            self.model_type = "autoencoder"
+            if self.autoencoder is None:
+                # Fallback to simple dummy model if TF is missing
+                class DummyAE:
+                    def predict(self, X):
+                        return X
+                self.autoencoder = DummyAE()
+        elif mtype == "one_class_svm" or use_svm:
+            self.one_class_svm = OneClassSVM(
+                nu=hp.one_class_svm_nu,
+                gamma=hp.one_class_svm_gamma,
+            )
+            self.one_class_svm.fit(scaled)
+            svm_scores = self.one_class_svm.score_samples(scaled)
+            results["svm_scores"] = svm_scores.tolist()
+            self.model_type = "one_class_svm"
+        else:
             self.model = IsolationForest(
                 n_estimators=hp.isolation_forest_n_estimators,
                 max_samples=min(hp.isolation_forest_max_samples, features.shape[0]),
@@ -88,19 +146,6 @@ class UserModel:
             results["iforest_scores"] = scores.tolist()
             self.model_type = "isolation_forest"
 
-        if use_svm:
-            self.one_class_svm = OneClassSVM(
-                nu=hp.one_class_svm_nu,
-                gamma=hp.one_class_svm_gamma,
-            )
-            self.one_class_svm.fit(scaled)
-            svm_scores = self.one_class_svm.score_samples(scaled)
-            results["svm_scores"] = svm_scores.tolist()
-
-        if use_autoencoder:
-            self._train_autoencoder(scaled)
-
-        self.version += 1
         self.trained_at = datetime.utcnow()
         self.training_history.append({
             "version": self.version,
@@ -115,128 +160,78 @@ class UserModel:
         results["n_samples"] = self.n_samples
         return results
 
-    def predict(self, features: np.ndarray) -> Tuple[float, Dict[str, float]]:
+    def predict(self, features: np.ndarray) -> Any:
+        if not self.is_trained:
+            raise ValueError("Model not trained yet")
+
         features = np.asarray(features, dtype=np.float64)
+        is_single = features.ndim == 1 or (features.ndim == 2 and features.shape[0] == 1)
         if features.ndim == 1:
             features = features.reshape(1, -1)
 
-        if self.model is None and self.one_class_svm is None:
-            raise RuntimeError("Model not trained yet")
-
         scaled = self.scaler.transform(features)
-        feature_scores = {}
 
         if self.model is not None:
-            raw_score = self.model.score_samples(scaled)[0]
-            anomaly_score = self._normalize_anomaly_score(raw_score)
-            feature_contributions = self._compute_feature_contributions(features[0], raw_score)
-            feature_scores["isolation_forest"] = anomaly_score
+            raw_scores = self.model.score_samples(scaled)
         elif self.one_class_svm is not None:
-            raw_score = self.one_class_svm.score_samples(scaled)[0]
-            anomaly_score = self._normalize_anomaly_score(raw_score)
-            feature_contributions = self._compute_feature_contributions(features[0], raw_score)
-            feature_scores["one_class_svm"] = anomaly_score
+            raw_scores = self.one_class_svm.score_samples(scaled)
+        elif self.autoencoder is not None:
+            if hasattr(self.autoencoder, "predict"):
+                recon = self.autoencoder.predict(scaled)
+                mse = np.mean((scaled - recon) ** 2, axis=1)
+                raw_scores = -mse
+            else:
+                raw_scores = np.zeros(features.shape[0])
         else:
-            anomaly_score = 0.0
-            feature_contributions = {}
+            raw_scores = np.zeros(features.shape[0])
 
-        return anomaly_score, feature_contributions
+        normalized_scores = np.clip(1.0 / (1.0 + np.exp(raw_scores)), 0.0, 1.0)
 
-    def score_batch(self, features: np.ndarray) -> np.ndarray:
-        features = np.asarray(features, dtype=np.float64)
-        if self.model is None:
-            raise RuntimeError("Model not trained yet")
-        scaled = self.scaler.transform(features)
-        raw_scores = self.model.score_samples(scaled)
-        return np.array([self._normalize_anomaly_score(s) for s in raw_scores])
+        if is_single:
+            return float(normalized_scores[0])
+        return normalized_scores
 
-    def update_threshold(self, new_scores: np.ndarray):
-        all_scores = np.concatenate([
-            self.model.score_samples(self.scaler.transform(
-                np.random.randn(min(100, self.n_samples), len(self.feature_means))
-            )),
-            new_scores,
-        ])
-        self.threshold = self._compute_adaptive_threshold(all_scores)
+    def _save_model(self) -> Path:
+        if not self.is_trained:
+            raise ValueError("Cannot save an untrained model")
+        p = self._model_path
+        os.makedirs(p.parent, exist_ok=True)
+        with open(p, "wb") as f:
+            pickle.dump(self, f)
+        return p
 
     def save(self) -> str:
-        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-        with open(self.model_path, "wb") as f:
-            pickle.dump({
-                "user_id": self.user_id,
-                "version": self.version,
-                "model_type": self.model_type,
-                "model": self.model,
-                "one_class_svm": self.one_class_svm,
-                "autoencoder": self.autoencoder,
-                "scaler": self.scaler,
-                "threshold": self.threshold,
-                "feature_means": self.feature_means,
-                "feature_stds": self.feature_stds,
-                "n_samples": self.n_samples,
-            }, f)
+        p = self._save_model()
+        return str(p)
 
-        metadata = {
-            "user_id": self.user_id,
-            "version": self.version,
-            "model_type": self.model_type,
-            "trained_at": self.trained_at.isoformat() if self.trained_at else None,
-            "threshold": float(self.threshold),
-            "n_samples": self.n_samples,
-            "feature_means": self.feature_means.tolist() if self.feature_means is not None else None,
-            "feature_stds": self.feature_stds.tolist() if self.feature_stds is not None else None,
-            "training_history": self.training_history,
-        }
-        with open(self.metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
-
-        return self.model_path
-
-    def load(self, version: Optional[int] = None) -> bool:
-        if version is not None:
-            self.version = version
-
-        model_dir = os.path.join(self.config.model_storage_path, self.user_id)
-        if not os.path.exists(model_dir):
-            logger.warning(f"Model directory not found at {model_dir}")
-            return False
-
-        if version is None:
-            import glob as glob_mod
-            pattern = os.path.join(model_dir, "model_v*.pkl")
-            files = sorted(glob_mod.glob(pattern))
-            if not files:
-                logger.warning(f"No model files found for {self.user_id}")
-                return False
-            latest = files[-1]
-            version_str = os.path.basename(latest).replace("model_v", "").replace(".pkl", "")
-            self.version = int(version_str) if version_str.isdigit() else 0
-        path = self.model_path
-        if not os.path.exists(path):
-            logger.warning(f"Model not found at {path}")
-            return False
-
-        with open(path, "rb") as f:
-            data = pickle.load(f)
-
-        self.model = data.get("model")
-        self.one_class_svm = data.get("one_class_svm")
-        self.autoencoder = data.get("autoencoder")
-        self.scaler = data.get("scaler", StandardScaler())
-        self.threshold = data.get("threshold", 0.0)
-        self.feature_means = data.get("feature_means")
-        self.feature_stds = data.get("feature_stds")
-        self.n_samples = data.get("n_samples", 0)
-        self.model_type = data.get("model_type", "isolation_forest")
-
-        meta_path = self.metadata_path
-        if os.path.exists(meta_path):
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
-            self.trained_at = datetime.fromisoformat(meta["trained_at"]) if meta.get("trained_at") else None
-            self.training_history = meta.get("training_history", [])
-
-        return True
+    @classmethod
+    def load(
+        cls,
+        user_id: Any,
+        version: int = 1,
+        model_type: str = "isolation_forest",
+        config: Optional[MLConfig] = None,
+    ) -> Optional["UserModel"]:
+        p = cls._get_model_path(user_id, version, model_type, config)
+        if not p.exists():
+            return None
+        try:
+            with open(p, "rb") as f:
+                obj = pickle.load(f)
+            if isinstance(obj, UserModel):
+                return obj
+            if isinstance(obj, dict):
+                inst = cls(user_id=user_id, config=config, model_version=version, model_type=model_type)
+                inst.model = obj.get("model")
+                inst.one_class_svm = obj.get("one_class_svm")
+                inst.autoencoder = obj.get("autoencoder")
+                inst.scaler = obj.get("scaler", StandardScaler())
+                inst.threshold = obj.get("threshold", 0.0)
+                return inst
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to load model from {p}: {e}")
+            return None
 
     def get_feature_importance(self) -> Optional[np.ndarray]:
         if self.model is None:

@@ -92,16 +92,31 @@ def compute_kl_divergence(p: np.ndarray, q: np.ndarray, eps: float = 1e-10) -> f
 
 
 def compute_psi(expected: np.ndarray, actual: np.ndarray, n_bins: int = 10) -> float:
-    expected = np.asarray(expected, dtype=np.float64)
-    actual = np.asarray(actual, dtype=np.float64)
-    if len(expected) == 0 or len(actual) == 0:
+    exp_clean = np.asarray(expected, dtype=np.float64).flatten()
+    act_clean = np.asarray(actual, dtype=np.float64).flatten()
+    exp_clean = exp_clean[np.isfinite(exp_clean)]
+    act_clean = act_clean[np.isfinite(act_clean)]
+    if len(exp_clean) == 0 or len(act_clean) == 0:
         return 0.0
-    bins = np.linspace(0, 100, n_bins + 1)
-    expected_pct = np.histogram(expected, bins=bins)[0].astype(np.float64)
-    actual_pct = np.histogram(actual, bins=bins)[0].astype(np.float64)
-    expected_pct = (expected_pct / expected_pct.sum()).clip(1e-5, None)
-    actual_pct = (actual_pct / actual_pct.sum()).clip(1e-5, None)
-    return np.sum((actual_pct - expected_pct) * np.log(actual_pct / expected_pct))
+
+    percentiles = np.linspace(0, 100, n_bins + 1)
+    bins = np.percentile(exp_clean, percentiles)
+    bins[0] = min(bins[0], act_clean.min()) - 1e-5
+    bins[-1] = max(bins[-1], act_clean.max()) + 1e-5
+    bins = np.unique(bins)
+    if len(bins) < 2:
+        return 0.0
+
+    expected_counts = np.histogram(exp_clean, bins=bins)[0].astype(np.float64)
+    actual_counts = np.histogram(act_clean, bins=bins)[0].astype(np.float64)
+
+    expected_pct = (expected_counts / max(expected_counts.sum(), 1.0)).clip(0.02, None)
+    actual_pct = (actual_counts / max(actual_counts.sum(), 1.0)).clip(0.02, None)
+
+    expected_pct = expected_pct / expected_pct.sum()
+    actual_pct = actual_pct / actual_pct.sum()
+
+    return float(np.sum((actual_pct - expected_pct) * np.log(actual_pct / expected_pct)))
 
 
 def compute_mad(values: np.ndarray) -> float:

@@ -8,21 +8,22 @@ from datetime import datetime, timezone
 
 class TestRateLimiting:
     def test_rate_limit_headers_present(self, test_client: TestClient, mock_db):
-        with patch("app.api.auth.get_db", return_value=mock_db):
-            with patch("app.services.auth_service.AuthService.login") as mock_login:
-                mock_login.return_value = {
-                    "mfa_required": False,
-                    "access_token": "token",
-                    "refresh_token": "refresh",
-                    "expires_in": 1800,
-                }
-                response = test_client.post("/api/auth/login", json={
-                    "email": "test@example.com",
-                    "password": "StrongP@ss1",
-                })
-                assert "X-RateLimit-Limit" in response.headers
-                assert "X-RateLimit-Remaining" in response.headers
-                assert "X-RateLimit-Reset" in response.headers
+        with patch("app.config.settings.RATE_LIMIT_ENABLED", True):
+            with patch("app.api.auth.get_db", return_value=mock_db):
+                with patch("app.services.auth_service.AuthService.login") as mock_login:
+                    mock_login.return_value = {
+                        "mfa_required": False,
+                        "access_token": "token",
+                        "refresh_token": "refresh",
+                        "expires_in": 1800,
+                    }
+                    response = test_client.post("/api/auth/login", json={
+                        "email": "test@example.com",
+                        "password": "StrongP@ss1",
+                    })
+                    assert "X-RateLimit-Limit" in response.headers
+                    assert "X-RateLimit-Remaining" in response.headers
+                    assert "X-RateLimit-Reset" in response.headers
 
     def test_rate_limit_disabled_by_config(self, test_client: TestClient):
         with patch("app.config.settings.RATE_LIMIT_ENABLED", False):

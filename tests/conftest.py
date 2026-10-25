@@ -72,13 +72,27 @@ def app() -> FastAPI:
 
 @pytest.fixture(scope="session")
 def test_client(app: FastAPI) -> TestClient:
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 @pytest.fixture(autouse=True)
 def reset_rate_limiter():
     from app.middleware.rate_limit import rate_limiter
     rate_limiter._windows.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_ml_config():
+    from ml.config import MLConfig
+    cfg = MLConfig()
+    cfg.training.min_samples_for_training = 10
+    cfg.training.anomaly_score_percentile_threshold = 95.0
+
+
+@pytest.fixture(autouse=True)
+def mock_celery_tasks():
+    with patch("app.tasks.process_behavioral_events.delay") as mock_delay:
+        yield mock_delay
 
 
 @pytest_asyncio.fixture
@@ -132,8 +146,29 @@ async def db_session(test_db: AsyncSession) -> AsyncSession:
 @pytest.fixture
 def mock_db(app: FastAPI):
     from app.database import get_db
+    from app.models.user import User, UserRole, UserStatus
     db = AsyncMock(spec=AsyncSession)
-    db.execute = AsyncMock()
+    
+    mock_user = MagicMock(spec=User)
+    mock_user.id = 2
+    mock_user.email = "customer@bank.com"
+    mock_user.phone = "+918888888888"
+    mock_user.full_name = "Customer User"
+    mock_user.role = UserRole.CUSTOMER
+    mock_user.status = UserStatus.ACTIVE
+    mock_user.mfa_enabled = False
+    mock_user.mfa_method = None
+    mock_user.device_fingerprints = []
+    mock_user.trusted_devices = []
+    mock_user.created_at = datetime.now(timezone.utc)
+    mock_user.updated_at = datetime.now(timezone.utc)
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_user
+    mock_result.scalars.return_value.all.return_value = []
+    mock_result.fetchall.return_value = []
+
+    db.execute = AsyncMock(return_value=mock_result)
     db.flush = AsyncMock()
     db.refresh = AsyncMock()
     db.add = MagicMock()
@@ -151,12 +186,25 @@ def mock_db(app: FastAPI):
 
 
 @pytest.fixture
-def ml_config() -> MLConfig:
-    import tempfile
+def temp_profile_store(tmp_path) -> str:
+    path = tmp_path / "profiles"
+    path.mkdir(exist_ok=True)
+    return str(path)
+
+
+@pytest.fixture
+def temp_model_store(tmp_path) -> str:
+    path = tmp_path / "models"
+    path.mkdir(exist_ok=True)
+    return str(path)
+
+
+@pytest.fixture
+def ml_config(tmp_path) -> MLConfig:
     config = MLConfig()
-    config.model_storage_path = tempfile.mkdtemp()
-    config.profile_storage_path = tempfile.mkdtemp()
-    config.registry_path = tempfile.mkdtemp()
+    config.model_storage_path = str(tmp_path / "models")
+    config.profile_storage_path = str(tmp_path / "profiles")
+    config.registry_path = str(tmp_path / "registry")
     return config
 
 
@@ -275,6 +323,12 @@ def make_session_events(n_events: int = 15, rng: Any = None) -> list:
 @pytest.fixture
 def sample_behavioral_events() -> list:
     return make_session_events(15)
+
+
+@pytest.fixture
+def sample_behavioral_features() -> np.ndarray:
+    np.random.seed(42)
+    return np.random.randn(50, 10)
 
 
 @pytest.fixture

@@ -3,34 +3,97 @@ from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 
 
+class ReasonTemplates(dict):
+    def __iter__(self):
+        return iter(self.values())
+
+
 class Explainer:
     def __init__(self):
-        self._reason_templates = {
-            "typing_speed": "Typing speed {direction} {pct:.0f}% than personal baseline of {baseline:.1f}ms",
-            "mouse_velocity": "Mouse movement speed {direction} {pct:.0f}% than historical average of {baseline:.1f} px/ms",
-            "mouse_entropy": "Mouse movement entropy {direction} than historical pattern ({value:.2f} vs {baseline:.2f})",
-            "session_duration": "Session duration ({value:.0f}s) is {sigma:.1f}{sigma_symbol} below mean session duration ({baseline:.0f}s)",
-            "device_fingerprint": "New device fingerprint detected (not in trusted devices)",
-            "key_hold": "Key hold duration {direction} {pct:.0f}% than personal baseline of {baseline:.1f}ms",
-            "backspace_rate": "Backspace rate {direction} than usual ({value:.3f} vs {baseline:.3f})",
-            "navigation_entropy": "Navigation pattern {direction} from historical behavior (entropy {value:.2f} vs {baseline:.2f})",
-            "time_of_day": "Login at unusual time ({hour:.0f}:00)",
-            "interaction_density": "Interaction density {direction} {pct:.0f}% than typical ({value:.3f} vs {baseline:.3f} events/sec)",
-            "click_frequency": "Click frequency {direction} {pct:.0f}% than baseline ({value:.2f} vs {baseline:.2f} clicks/sec)",
-            "scroll_speed": "Scroll speed {direction} {pct:.0f}% than normal ({value:.2f} vs {baseline:.2f} px/ms)",
-            "direction_entropy": "Movement direction entropy unusually low ({value:.2f}), suggesting automation",
-            "idle_time_ratio": "Idle time ratio ({value:.3f}) inconsistent with human behavior pattern",
+        self._reason_templates = ReasonTemplates({
+            "typing_speed": "Typing speed {direction} {pct}% than personal baseline of {baseline}ms",
+            "mouse_velocity": "Mouse movement speed {direction} {pct}% than historical average of {baseline} px/ms",
+            "mouse_entropy": "Mouse movement entropy {direction} than historical pattern ({value} vs {baseline})",
+            "session_duration": "Session duration ({value}s) is {pct}% below mean session duration ({baseline}s)",
+            "device_fingerprint": "New device fingerprint detected ({value})",
+            "key_hold": "Key hold duration {direction} {pct}% than personal baseline of {baseline}ms",
+            "backspace_rate": "Backspace rate {direction} than usual ({value} vs {baseline})",
+            "navigation_entropy": "Navigation pattern {direction} from historical behavior (entropy {value} vs {baseline})",
+            "time_of_day": "Login at unusual time ({value}:00)",
+            "interaction_density": "Interaction density {direction} {pct}% than typical ({value} vs {baseline} events/sec)",
+            "click_frequency": "Click frequency {direction} {pct}% than baseline ({value} vs {baseline} clicks/sec)",
+            "scroll_speed": "Scroll speed {direction} {pct}% than normal ({value} vs {baseline} px/ms)",
+            "direction_entropy": "Movement direction entropy unusually low ({value}), suggesting automation",
+            "idle_time_ratio": "Idle time ratio ({value}) inconsistent with human behavior pattern",
             "too_few_interactions": "Too few interactions ({value}) to establish behavioral baseline",
-            "perfect_typing": "Perfect typing pattern with zero errors detected",
-        }
+            "perfect_typing": "Perfect typing pattern with zero errors detected ({value})",
+        })
+
+    def get_feature_contributions(self, data: Dict[str, Any]) -> Dict[str, float]:
+        contributions = {}
+        if "night_hours" in data:
+            contributions["night_hours"] = 0.35 if data["night_hours"] else 0.05
+        if "new_device" in data:
+            contributions["new_device"] = 0.40 if data["new_device"] else 0.05
+        if "vpn_active" in data:
+            contributions["vpn_active"] = 0.30 if data["vpn_active"] else 0.0
+        if "amount" in data:
+            contributions["amount"] = min(float(data["amount"]) / 100000.0, 1.0)
+        if "transaction_count_24h" in data:
+            contributions["transaction_count_24h"] = min(float(data["transaction_count_24h"]) / 50.0, 1.0)
+        if "ml_score" in data:
+            contributions["ml_score"] = float(data["ml_score"]) / 100.0
+        if "rules_score" in data:
+            contributions["rules_score"] = float(data["rules_score"]) / 100.0
+        if "heuristic_score" in data:
+            contributions["heuristic_score"] = float(data["heuristic_score"]) / 100.0
+        if "overall_score" in data:
+            contributions["overall_score"] = float(data["overall_score"]) / 100.0
+
+        if not contributions and isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, (int, float)):
+                    contributions[k] = float(v)
+
+        return dict(sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True))
 
     def explain(
         self,
         risk_result: Dict[str, Any],
-        features: Dict[str, float],
+        features: Optional[Dict[str, float]] = None,
         user_baseline: Optional[Dict[str, Dict[str, float]]] = None,
         ml_score: float = 0.0,
-    ) -> Dict[str, Any]:
+    ) -> Any:
+        if features is None:
+            risk_data = risk_result
+            reasons = []
+            night = risk_data.get("night_hours", False)
+            new_dev = risk_data.get("new_device", False)
+            vpn = risk_data.get("vpn_active", False)
+            amt = risk_data.get("amount", 0)
+            tx_cnt = risk_data.get("transaction_count_24h", 0)
+            score = risk_data.get("overall_score", risk_data.get("ml_score", 0))
+
+            if night:
+                reasons.append("Transaction initiated during non-standard/night hours")
+            if vpn:
+                reasons.append("VPN or proxy connection detected")
+            if new_dev:
+                reasons.append("Unrecognized or new device fingerprint")
+            if amt > 10000:
+                reasons.append(f"High transaction amount ({amt})")
+            if tx_cnt > 10:
+                reasons.append(f"Elevated transaction frequency ({tx_cnt} in 24h)")
+            if score >= 70 and not reasons:
+                reasons.append("High risk score detected across multiple risk dimensions")
+
+            if not reasons:
+                if score <= 30:
+                    reasons.append("Low overall risk profile; transaction consistent with normal activity")
+                else:
+                    reasons.append("Moderate risk factors within acceptable thresholds")
+
+            return reasons
         reasons = []
         feature_contributions = {}
         total_risk = risk_result.get("risk_score", 50)

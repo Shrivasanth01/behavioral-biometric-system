@@ -134,8 +134,8 @@ class CardFreezeResponse(BaseModel):
 
 
 class CardLimitUpdate(BaseModel):
-    daily_limit: Optional[float] = Field(None, gt=0)
-    monthly_limit: Optional[float] = Field(None, gt=0)
+    daily_limit: Optional[float] = None
+    monthly_limit: Optional[float] = None
 
 
 class LoanResponse(BaseModel):

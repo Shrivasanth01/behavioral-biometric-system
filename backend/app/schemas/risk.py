@@ -121,3 +121,17 @@ class RiskDistributionResponse(BaseModel):
     high: int
     critical: int
     total: int
+    LOW: Optional[int] = None
+    MEDIUM: Optional[int] = None
+    HIGH: Optional[int] = None
+    CRITICAL: Optional[int] = None
+
+    def model_post_init(self, __context):
+        if self.LOW is None:
+            self.LOW = self.low
+        if self.MEDIUM is None:
+            self.MEDIUM = self.medium
+        if self.HIGH is None:
+            self.HIGH = self.high
+        if self.CRITICAL is None:
+            self.CRITICAL = self.critical

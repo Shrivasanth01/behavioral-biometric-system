@@ -8,6 +8,7 @@ from app.database import Base
 class AccountType(str, enum.Enum):
     SAVINGS = "SAVINGS"
     CURRENT = "CURRENT"
+    CHECKING = "CHECKING"
 
 
 class AccountStatus(str, enum.Enum):

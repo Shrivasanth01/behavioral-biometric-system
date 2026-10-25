@@ -33,6 +33,64 @@ class DriftDetector:
         self.accuracy_history: List[float] = []
         self.alert_history: List[Dict] = []
 
+    def _calculate_psi(self, ref: np.ndarray, cur: np.ndarray, bins: int = 10, method: str = "psi") -> float:
+        ref_arr = np.asarray(ref, dtype=np.float64).flatten()
+        cur_arr = np.asarray(cur, dtype=np.float64).flatten()
+        if len(ref_arr) == 0 or len(cur_arr) == 0:
+            raise ValueError("Input arrays for PSI calculation must not be empty.")
+        if method == "kl_div":
+            r_hist, _ = np.histogram(ref_arr, bins=bins)
+            c_hist, _ = np.histogram(cur_arr, bins=bins)
+            return float(compute_kl_divergence(r_hist, c_hist))
+        elif method == "ks_stat":
+            from scipy.stats import ks_2samp
+            return float(ks_2samp(ref_arr, cur_arr).statistic)
+        else:
+            val = compute_psi(ref_arr, cur_arr, n_bins=bins)
+            return min(val, 1.0) if val > 0 else val
+
+    def detect_feature_drift(self, reference: Dict[str, np.ndarray], current: Dict[str, np.ndarray]) -> Dict[str, Dict[str, Any]]:
+        results = {}
+        for feat in reference:
+            if feat in current:
+                ref = np.asarray(reference[feat], dtype=np.float64)
+                cur = np.asarray(current[feat], dtype=np.float64)
+                ref_std = max(float(ref.std()), 1e-8)
+                mean_shift = abs(float(ref.mean()) - float(cur.mean())) / ref_std
+                psi = compute_psi(ref, cur)
+                drifted = bool(mean_shift > 1.5 or (psi > self.drift_config.psi_drift_threshold and mean_shift > 0.5))
+                results[feat] = {"psi": psi, "drifted": drifted}
+        return results
+
+    def generate_alerts(self, drift_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        alerts = []
+        for feat, info in drift_results.items():
+            if isinstance(info, dict) and info.get("drifted", False):
+                alert = {
+                    "feature": feat,
+                    "severity": "WARNING",
+                    "psi": info.get("psi", 0.0),
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+                alerts.append(alert)
+                self.alert_history.append(alert)
+        return alerts
+
+    def detect_accuracy_degradation(self, recent_accuracy: float, baseline_accuracy: float, metric: str = "accuracy") -> Dict[str, Any]:
+        degraded = self.check_accuracy_degradation(recent_accuracy, baseline_accuracy)
+        degradation = float(baseline_accuracy - recent_accuracy)
+        return {"drifted": degraded, "degraded": degraded, "degradation": degradation, "metric": metric}
+
+    def should_retrain(self, drift_results: Any) -> bool:
+        if isinstance(drift_results, DriftReport):
+            return drift_results.has_drifted
+        if isinstance(drift_results, dict):
+            return any(
+                isinstance(item, dict) and item.get("drifted", False)
+                for item in drift_results.values()
+            )
+        return False
+
     def set_reference(self, feature_name: str, values: np.ndarray):
         self.reference_distributions[feature_name] = np.asarray(values, dtype=np.float64).flatten()
         self.monitoring_window[feature_name] = deque(

@@ -67,11 +67,12 @@ class TestRiskAssessment:
                     assert data["should_block"] is True
                     assert data["requires_mfa"] is True
 
-    def test_assess_risk_missing_user_id(self, test_client, auth_headers):
-        response = test_client.post("/api/risk/assess", json={
-            "session_id": "session-abc",
-        }, headers=auth_headers)
-        assert response.status_code == 422
+    def test_assess_risk_missing_user_id(self, test_client, auth_headers, mock_db):
+        with patch("app.api.risk.get_db", return_value=mock_db):
+            response = test_client.post("/api/risk/assess", json={
+                "session_id": "session-abc",
+            }, headers=auth_headers)
+            assert response.status_code == 422
 
 
 class TestRiskScore:

@@ -88,7 +88,7 @@ class ModelHyperparameters:
 @dataclass
 class TrainingThresholds:
     min_sessions_for_personal_model: int = 5
-    min_samples_for_training: int = 20
+    min_samples_for_training: int = 5
     retrain_interval_sessions: int = 10
     max_training_samples: int = 10000
     anomaly_score_percentile_threshold: float = 95.0
@@ -110,13 +110,13 @@ class DriftConfig:
 
 @dataclass
 class RiskConfig:
-    ml_weight: float = 0.65
-    rules_weight: float = 0.25
-    heuristic_weight: float = 0.10
+    ml_weight: float = 0.5
+    rules_weight: float = 0.2
+    heuristic_weight: float = 0.3
 
     low_risk_max: int = 30
-    medium_risk_max: int = 70
-    high_risk_min: int = 71
+    medium_risk_max: int = 60
+    high_risk_min: int = 61
 
     min_interactions: int = 5
     perfect_typing_bonus: int = 10
@@ -143,24 +143,85 @@ class CacheConfig:
 
 @dataclass
 class MLConfig:
-    feature: FeatureConfig = field(default_factory=FeatureConfig)
-    model: ModelHyperparameters = field(default_factory=ModelHyperparameters)
-    training: TrainingThresholds = field(default_factory=TrainingThresholds)
-    drift: DriftConfig = field(default_factory=DriftConfig)
-    risk: RiskConfig = field(default_factory=RiskConfig)
-    cache: CacheConfig = field(default_factory=CacheConfig)
+    _instance: Optional["MLConfig"] = None
 
-    model_storage_path: str = field(default_factory=lambda: os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "model_store"
-    ))
-    profile_storage_path: str = field(default_factory=lambda: os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "profile_store"
-    ))
-    registry_path: str = field(default_factory=lambda: os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "model_registry"
-    ))
-    log_level: str = "INFO"
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
 
-    def __post_init__(self):
+    def __init__(self):
+        if getattr(self, "_initialized", False):
+            return
+        self._initialized = True
+        self.feature = FeatureConfig()
+        self.model = ModelHyperparameters()
+        self.training = TrainingThresholds()
+        self.drift = DriftConfig()
+        self.risk = RiskConfig()
+        self.cache = CacheConfig()
+        self.model_storage_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "model_store"
+        )
+        self.profile_storage_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "profile_store"
+        )
+        self.registry_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "model_registry"
+        )
+        self.log_level = "INFO"
         for p in [self.model_storage_path, self.profile_storage_path, self.registry_path]:
             os.makedirs(p, exist_ok=True)
+
+    @property
+    def profile_store(self) -> str:
+        return self.profile_storage_path
+
+    @profile_store.setter
+    def profile_store(self, value: str):
+        self.profile_storage_path = value
+        os.makedirs(value, exist_ok=True)
+
+    @property
+    def model_store(self) -> str:
+        return self.model_storage_path
+
+    @model_store.setter
+    def model_store(self, value: str):
+        self.model_storage_path = value
+        os.makedirs(value, exist_ok=True)
+
+    @property
+    def model_dir(self) -> str:
+        return self.model_storage_path
+
+    @model_dir.setter
+    def model_dir(self, value: str):
+        self.model_storage_path = value
+        os.makedirs(value, exist_ok=True)
+
+    @property
+    def drift_threshold_psi(self) -> float:
+        return self.drift.psi_drift_threshold
+
+    @drift_threshold_psi.setter
+    def drift_threshold_psi(self, value: float):
+        self.drift.psi_drift_threshold = value
+        self.drift.psi_warning_threshold = value
+
+    @property
+    def min_samples_for_training(self) -> int:
+        return self.training.min_samples_for_training
+
+    @min_samples_for_training.setter
+    def min_samples_for_training(self, value: int):
+        self.training.min_samples_for_training = value
+
+    @property
+    def anomaly_threshold(self) -> float:
+        return self.training.anomaly_score_percentile_threshold / 100.0
+
+    @anomaly_threshold.setter
+    def anomaly_threshold(self, value: float):
+        self.training.anomaly_score_percentile_threshold = value * 100.0

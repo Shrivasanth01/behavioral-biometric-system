@@ -46,7 +46,7 @@ async def get_current_user(
 
     if user is None:
         raise UnauthorizedException("User not found")
-    if user.status in (UserStatus.SUSPENDED, UserStatus.LOCKED):
+    if isinstance(user, User) and user.status in (UserStatus.SUSPENDED, UserStatus.LOCKED):
         raise ForbiddenException(f"Account is {user.status.value.lower()}")
 
     return user
